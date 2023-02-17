@@ -1,21 +1,36 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const chunk_mod = @import("./chunk.zig");
-const Chunk = chunk_mod.Chunk;
-const OpCode = chunk_mod.OpCode;
+const options = @import("build_options");
+const Chunk = @import("./Chunk.zig");
+const OpCode = Chunk.OpCode;
+const Parser = @import("./Parser.zig");
 const mem = std.mem;
 const VmAllocator = @import("./memory.zig");
 const VM = @This();
 const Value = @import("./value.zig").Value;
 const os = std.os;
-pub const Error = error{ OutOfMemroy, Unexpected, WouldBlock, NotOpenForWriting, OperationAborted, SystemResources, ConnectionResetByPeer, BrokenPipe, AccessDenied, NoSpaceLeft, InputOutput, FileTooBig, DiskQuota } || VmAllocator.Error;
-
-const STACK_MAX = 256;
+// zig fmt: off
+pub const Error = error{ 
+    Interpret, Compile, 
+    UnterminatedString, 
+    OutOfMemroy, Unexpected, 
+    WouldBlock,
+    NotOpenForWriting,
+    OperationAborted, 
+    SystemResources, 
+    ConnectionResetByPeer, 
+    BrokenPipe, 
+    AccessDenied, 
+    NoSpaceLeft, 
+    InputOutput, 
+    FileTooBig, 
+    DiskQuota } || VmAllocator.Error || Parser.Error;
+// zig fmt: on
 
 frame: Frame = undefined,
 memory: VmAllocator = VmAllocator{},
 stack_top: usize = 0,
-stack: [STACK_MAX]Value = undefined,
+stack: [options.stack_max]Value = undefined,
 
 fn resetStack(self: *VM) void {
     self.stack_top = 0;
@@ -64,10 +79,13 @@ pub fn init() VM {
     vm.resetStack();
     return vm;
 }
+pub fn free(self: *VM) void {}
+pub fn interpret(self: *VM, source: []const u8) Error!void {
+    var parser = Parser.init(source);
+    try parser.compile();
+    //  self.frame = Frame.init(chunk);
 
-pub fn interpret(self: *VM, chunk: *Chunk) Error!void {
-    self.frame = Frame.init(chunk);
-    try self.run();
+    //  try self.run();
 }
 
 fn binaryOp(self: *VM, op: OpCode) Error!void {
@@ -85,7 +103,7 @@ fn binaryOp(self: *VM, op: OpCode) Error!void {
 fn run(self: *VM) Error!void {
     var frame: *Frame = &self.frame;
     while (true) {
-        if (builtin.mode == .Debug) {
+        if (options.debug_trace_execution) {
             var writer = std.io.getStdOut().writer();
             _ = try writer.write("        ");
             var i: usize = 0;
@@ -93,7 +111,7 @@ fn run(self: *VM) Error!void {
                 try writer.print("[ {} ]", .{self.stack[i]});
             }
             try writer.writeAll("\n");
-            _ = try chunk_mod.disassembleInstruction(frame.chunk, frame.ip.pos, writer);
+            _ = try Chunk.disassembleInstruction(frame.chunk, frame.ip.pos, writer);
         }
         const instruction = frame.readByte();
         try switch (@intToEnum(OpCode, instruction)) {

@@ -11,9 +11,12 @@ pub fn build(b: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
+
     const exe = b.addExecutable("zlox", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
+    exe.addBuildOption(usize, "stack_max", 255);
+    exe.addBuildOption(bool, "debug_trace_execution", true);
     exe.install();
 
     const run_cmd = exe.run();

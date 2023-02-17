@@ -5,7 +5,7 @@ const Allocator = mem.Allocator;
 const Array = std.ArrayListUnmanaged;
 const Value = @import("./value.zig").Value;
 pub const Error = error{WriteError} || std.os.WriteError;
-pub const Chunk = @This();
+const Chunk = @This();
 allocator: *Allocator,
 code: Array(u8),
 lines: Array(u8),
@@ -96,7 +96,6 @@ pub const OpCode = enum(u8) {
                 i += 1;
             }
             tag_name[i] = std.ascii.toUpper(c);
-            tag_name[i + 1] = 0;
             i += 1;
         }
         if (options.alignment == .Right or options.alignment == .Center) {
@@ -104,6 +103,7 @@ pub const OpCode = enum(u8) {
                 tag_name[i] = options.fill;
             }
         }
+        tag_name[i] = 0;
         try writer.print("{s}", .{tag_name});
     }
 };
