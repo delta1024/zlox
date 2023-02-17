@@ -6,7 +6,10 @@ const Token = Scanner.Token;
 const TokenType = Scanner.TokenType;
 const Chunk = @import("./Chunk.zig");
 const OpCode = Chunk.OpCode;
-const Value = @import("./value.zig").Value;
+const val_mod = @import("./value.zig");
+const Value = val_mod.Value;
+const numberVal = val_mod.numberVal;
+const boolVal = val_mod.boolVal;
 
 pub const Error = error{ UnterminatedString, UnexpectedCharacter, Compiler, OutOfMemory, ParseIntError } || Scanner.Error || Chunk.Error || std.fmt.ParseIntError;
 
@@ -98,7 +101,7 @@ fn consume(self: *Parser, id: TokenType, comptime message: []const u8) Error!voi
     return self.errorAtCurrent(message);
 }
 fn emitByte(self: *Parser, byte: u8) Error!void {
-    try self.currentChunk().push_code(byte, @truncate(u8,self.previous.line));
+    try self.currentChunk().push_code(byte, @truncate(u8, self.previous.line));
 }
 fn emitBytes(self: *Parser, byte1: u8, byte2: u8) Error!void {
     try self.emitByte(byte1);
@@ -141,7 +144,7 @@ fn grouping(self: *Parser) Error!void {
 }
 fn number(self: *Parser) Error!void {
     const value = try std.fmt.parseFloat(f64, self.previous.start);
-    try self.emitConstant(value);
+    try self.emitConstant(numberVal(value));
 }
 fn unary(self: *Parser) Error!void {
     const operator_type = self.previous.type;

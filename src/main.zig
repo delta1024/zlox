@@ -30,7 +30,7 @@ fn runFile(vm: *VM, file_path: []const u8) !void {
     defer vm.memory.allocator.free(file);
     vm.interpret(file) catch |err| switch (err) {
         VM.Error.Compile => std.process.exit(60),
-        VM.Error.Interpret => std.process.exit(75),
+        VM.Error.Runtime => std.process.exit(75),
         else => {
             try std.io.getStdErr().writer().print("{}", .{err});
             std.process.exit(1);

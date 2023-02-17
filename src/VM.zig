@@ -7,11 +7,14 @@ const Compiler = @import("./Compiler.zig");
 const mem = std.mem;
 const VmAllocator = @import("./memory.zig");
 const VM = @This();
-const Value = @import("./value.zig").Value;
+const val_mod = @import("./value.zig");
+const Value = val_mod.Value;
+const numberVal = val_mod.numberVal;
+const boolVal = val_mod.boolVal;
 const os = std.os;
 // zig fmt: off
 pub const Error = error{ 
-    Interpret, Compile, 
+    Runtime, Compile, 
     UnterminatedString, 
     OutOfMemroy, Unexpected, 
     WouldBlock,
@@ -35,6 +38,16 @@ stack: [options.stack_max]Value = undefined,
 fn resetStack(self: *VM) void {
     self.stack_top = 0;
 }
+fn runtimeError(self: *VM, comptime format: []const u8, args: anytype) Error {
+    const stderr = std.io.getStdErr().writer();
+    try stderr.print(format, args);
+    _ = try stderr.write("\n");
+
+    const instruction = self.frame.ip.pos - 1;
+    const line = self.frame.chunk.lines.items[instruction];
+    try stderr.print("[line {d}] in script\n", .{line});
+    return error.Runtime;
+}
 fn push(self: *VM, value: Value) void {
     self.stack[self.stack_top] = value;
     self.stack_top += 1;
@@ -42,6 +55,9 @@ fn push(self: *VM, value: Value) void {
 fn pop(self: *VM) Value {
     self.stack_top -= 1;
     return self.stack[self.stack_top];
+}
+fn peek(self: *VM, distance: usize) Value {
+    return self.stack[self.stack_top - distance - 1];
 }
 const Frame = struct {
     const Ip = struct {
@@ -91,16 +107,19 @@ pub fn interpret(self: *VM, source: []const u8) Error!void {
 }
 
 fn binaryOp(self: *VM, op: OpCode) Error!void {
-    const b = self.pop();
-    const a = self.pop();
+    if (!self.peek(0).is(f64) or !self.peek(1).is(f64)) {
+            return self.runtimeError("Operands must be numbers.", .{});
+        }
+    const b = self.pop().as(f64);
+    const a = self.pop().as(f64);
 
-    self.push(switch (op) {
+    self.push(numberVal(switch (op) {
         .Subtract => a - b,
         .Add => a + b,
         .Multiply => a * b,
         .Divide => a / b,
         else => unreachable,
-    });
+    }));
 }
 fn run(self: *VM) Error!void {
     var frame: *Frame = &self.frame;
@@ -129,7 +148,10 @@ fn run(self: *VM) Error!void {
             },
             .Add, .Subtract, .Multiply, .Divide => self.binaryOp(@intToEnum(OpCode, instruction)),
             .Negate => {
-                self.push(-self.pop());
+                if (!self.peek(0).is(f64)) {
+                    return self.runtimeError("Operand must be a number.", .{});
+                }
+                self.push(numberVal(-self.pop().as(f64)));
             },
         };
     }
