@@ -17,6 +17,7 @@ pub fn build(b: *std.build.Builder) void {
     exe.setBuildMode(mode);
     exe.addBuildOption(usize, "stack_max", 255);
     exe.addBuildOption(bool, "debug_trace_execution", true);
+    exe.addBuildOption(bool, "debug_print_code", true);
     exe.install();
 
     const run_cmd = exe.run();

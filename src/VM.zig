@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const options = @import("build_options");
 const Chunk = @import("./Chunk.zig");
 const OpCode = Chunk.OpCode;
-const Parser = @import("./Parser.zig");
+const Compiler = @import("./Compiler.zig");
 const mem = std.mem;
 const VmAllocator = @import("./memory.zig");
 const VM = @This();
@@ -24,7 +24,7 @@ pub const Error = error{
     NoSpaceLeft, 
     InputOutput, 
     FileTooBig, 
-    DiskQuota } || VmAllocator.Error || Parser.Error;
+    DiskQuota } || VmAllocator.Error || Compiler.Error;
 // zig fmt: on
 
 frame: Frame = undefined,
@@ -81,24 +81,26 @@ pub fn init() VM {
 }
 pub fn free(self: *VM) void {}
 pub fn interpret(self: *VM, source: []const u8) Error!void {
-    var parser = Parser.init(source);
-    try parser.compile();
-    //  self.frame = Frame.init(chunk);
+    var chunk = Chunk.init(&self.memory.allocator);
+    defer chunk.deinit();
+    var parser = Compiler.init(source);
+    try parser.compile(&chunk);
+    self.frame = Frame.init(&chunk);
 
-    //  try self.run();
+    try self.run();
 }
 
 fn binaryOp(self: *VM, op: OpCode) Error!void {
-    const b = self.pop().asType(f64);
-    const a = self.pop().asType(f64);
+    const b = self.pop();
+    const a = self.pop();
 
-    self.push(Value{ .number = switch (op) {
+    self.push(switch (op) {
         .Subtract => a - b,
         .Add => a + b,
         .Multiply => a * b,
         .Divide => a / b,
         else => unreachable,
-    } });
+    });
 }
 fn run(self: *VM) Error!void {
     var frame: *Frame = &self.frame;
@@ -108,7 +110,7 @@ fn run(self: *VM) Error!void {
             _ = try writer.write("        ");
             var i: usize = 0;
             while (i < self.stack_top) : (i += 1) {
-                try writer.print("[ {} ]", .{self.stack[i]});
+                try writer.print("[ {d:.2} ]", .{self.stack[i]});
             }
             try writer.writeAll("\n");
             _ = try Chunk.disassembleInstruction(frame.chunk, frame.ip.pos, writer);
@@ -118,7 +120,7 @@ fn run(self: *VM) Error!void {
             .Return => {
                 const value = self.pop();
                 const writer = std.io.getStdOut().writer();
-                try writer.print("{}\n", .{value});
+                try writer.print("{d:.2}\n", .{value});
                 return;
             },
             .Constant => {
@@ -127,7 +129,7 @@ fn run(self: *VM) Error!void {
             },
             .Add, .Subtract, .Multiply, .Divide => self.binaryOp(@intToEnum(OpCode, instruction)),
             .Negate => {
-                self.push(Value{ .number = -self.pop().asType(f64) });
+                self.push(-self.pop());
             },
         };
     }

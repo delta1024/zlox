@@ -46,7 +46,7 @@ fn simpleInstruction(instruction: OpCode, offset: usize, writer: anytype) !usize
 fn constantInstruction(chunk: *const Chunk, instruction: OpCode, offset: usize, writer: anytype) !usize {
     const pos = chunk.code.items[offset + 1];
 
-    try writer.print("{: >16} {d} '{}'\n", .{ instruction, pos, chunk.constants.items[pos] });
+    try writer.print("{: >16} {d} '{d:.2}'\n", .{ instruction, pos, chunk.constants.items[pos] });
     return offset + 2;
 }
 pub fn disassembleInstruction(chunk: *const Chunk, offset: usize, writer: anytype) !usize {

@@ -36,6 +36,7 @@ pub const TokenType = enum {
     For, Fun, If, Nil, Or,
     Print, Return, Super, This,
     True, Var, While,
+    Eof,
 
     // zig fmt: on
     pub fn format(self: *const TokenType, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
