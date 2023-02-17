@@ -11,6 +11,7 @@ const val_mod = @import("./value.zig");
 const Value = val_mod.Value;
 const numberVal = val_mod.numberVal;
 const boolVal = val_mod.boolVal;
+const nilVal = val_mod.nilVal;
 const os = std.os;
 // zig fmt: off
 pub const Error = error{ 
@@ -108,18 +109,26 @@ pub fn interpret(self: *VM, source: []const u8) Error!void {
 
 fn binaryOp(self: *VM, op: OpCode) Error!void {
     if (!self.peek(0).is(f64) or !self.peek(1).is(f64)) {
-            return self.runtimeError("Operands must be numbers.", .{});
-        }
+        return self.runtimeError("Operands must be numbers.", .{});
+    }
     const b = self.pop().as(f64);
     const a = self.pop().as(f64);
 
-    self.push(numberVal(switch (op) {
-        .Subtract => a - b,
-        .Add => a + b,
-        .Multiply => a * b,
-        .Divide => a / b,
+    self.push(switch (op) {
+        .Subtract, .Add, .Multiply, .Divide => numberVal(switch (op) {
+            .Subtract => a - b,
+            .Add => a + b,
+            .Multiply => a * b,
+            .Divide => a / b,
+            else => unreachable,
+        }),
+        .Greater, .Less => boolVal(switch (op) {
+            .Greater => a > b,
+            .Less => a < b,
+            else => unreachable,
+        }),
         else => unreachable,
-    }));
+    });
 }
 fn run(self: *VM) Error!void {
     var frame: *Frame = &self.frame;
@@ -146,7 +155,19 @@ fn run(self: *VM) Error!void {
                 const v = frame.readConstant();
                 self.push(v);
             },
+            .Nil => self.push(nilVal()),
+            .True => self.push(boolVal(true)),
+            .False => self.push(boolVal(false)),
+            .Equal => {
+                const b = self.pop();
+                const a = self.pop();
+                self.push(boolVal(a.equals(b)));
+            },
+            .Greater, .Less => self.binaryOp(@intToEnum(OpCode, instruction)),
             .Add, .Subtract, .Multiply, .Divide => self.binaryOp(@intToEnum(OpCode, instruction)),
+            .Not => {
+                self.push(boolVal(self.pop().isFalsey()));
+            },
             .Negate => {
                 if (!self.peek(0).is(f64)) {
                     return self.runtimeError("Operand must be a number.", .{});

@@ -68,10 +68,17 @@ pub fn disassembleChunk(chunk: *const Chunk, name: []const u8) !void {
 }
 pub const OpCode = enum(u8) {
     Constant,
+    Nil,
+    True,
+    False,
+    Equal,
+    Greater,
+    Less,
     Add,
     Subtract,
-    Divide,
     Multiply,
+    Divide,
+    Not,
     Negate,
     Return,
     pub fn format(self: OpCode, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {

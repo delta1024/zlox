@@ -131,10 +131,24 @@ fn binary(self: *Parser) Error!void {
     try self.parsePrecedence(@intToEnum(Precedence, @enumToInt(rule.precedence) + 1));
 
     switch (operator_type) {
+        .BangEqual => try self.emitBytes(@enumToInt(OpCode.Equal), @enumToInt(OpCode.Not)),
+        .EqualEqual => try self.emitByte(@enumToInt(OpCode.Equal)),
+        .Greater => try self.emitByte(@enumToInt(OpCode.Greater)),
+        .GreaterEqual => try self.emitBytes(@enumToInt(OpCode.Less), @enumToInt(OpCode.Not)),
+        .Less => try self.emitByte(@enumToInt(OpCode.Less)),
+        .LessEqual => try self.emitBytes(@enumToInt(OpCode.Greater), @enumToInt(OpCode.Not)),
         .Plus => try self.emitByte(@enumToInt(OpCode.Add)),
         .Minus => try self.emitByte(@enumToInt(OpCode.Subtract)),
         .Star => try self.emitByte(@enumToInt(OpCode.Multiply)),
         .Slash => try self.emitByte(@enumToInt(OpCode.Divide)),
+        else => unreachable,
+    }
+}
+fn literal(self: *Parser) Error!void {
+    switch (self.previous.type) {
+        .False => try self.emitByte(@enumToInt(OpCode.False)),
+        .Nil => try self.emitByte(@enumToInt(OpCode.Nil)),
+        .True => try self.emitByte(@enumToInt(OpCode.True)),
         else => unreachable,
     }
 }
@@ -154,6 +168,7 @@ fn unary(self: *Parser) Error!void {
 
     // Emit the operator instruction
     switch (operator_type) {
+        .Bang => try self.emitByte(@enumToInt(OpCode.Not)),
         .Minus => try self.emitByte(@enumToInt(OpCode.Negate)),
         else => unreachable,
     }
@@ -182,21 +197,21 @@ const rules: [39]ParseRule = [39]ParseRule{
     // Star
     .{ .infix = binary, .precedence = .Factor },
     // Bang
-    .{},
+    .{ .prefix = unary },
     // BangEqual
     .{},
     // Equal
     .{},
     // EqualEqual
-    .{},
+    .{ .infix = binary, .precedence = .Equality },
     // Greater
-    .{},
+    .{ .infix = binary, .precedence = .Comparison },
     // GreaterEqual
-    .{},
+    .{ .infix = binary, .precedence = .Comparison },
     // Less
-    .{},
+    .{ .infix = binary, .precedence = .Comparison },
     // LessEqual
-    .{},
+    .{ .infix = binary, .precedence = .Comparison },
     // Identifier
     .{},
     // String
@@ -210,7 +225,7 @@ const rules: [39]ParseRule = [39]ParseRule{
     // Else
     .{},
     // False
-    .{},
+    .{ .prefix = literal },
     // For
     .{},
     // Fun
@@ -218,7 +233,7 @@ const rules: [39]ParseRule = [39]ParseRule{
     // If
     .{},
     // Nil
-    .{},
+    .{ .prefix = literal },
     // Or
     .{},
     // Print
@@ -230,7 +245,7 @@ const rules: [39]ParseRule = [39]ParseRule{
     // This
     .{},
     // True
-    .{},
+    .{ .prefix = literal },
     // Var
     .{},
     // While
