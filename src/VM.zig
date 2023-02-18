@@ -39,6 +39,7 @@ pub const Error = error{
 frame: Frame = undefined,
 memory: VmAllocator = VmAllocator{},
 strings: Table(*ObjString) = Table(*ObjString){},
+globals: Table(Value) = Table(Value){},
 objects: ?*Obj = null,
 stack_top: usize = 0,
 stack: [options.stack_max]Value = undefined,
@@ -89,12 +90,16 @@ const Frame = struct {
             .ip = Ip.init(chunk),
         };
     }
-    fn readByte(self: *Frame) u8 {
+    inline fn readByte(self: *Frame) u8 {
         return self.ip.next() orelse 0;
     }
-    fn readConstant(self: *Frame) Value {
+    inline fn readConstant(self: *Frame) Value {
         const index = self.readByte();
         return self.chunk.constants.items[index];
+    }
+    inline fn readString(self: *Frame) *ObjString {
+        const str = self.readConstant();
+        return @fieldParentPtr(ObjString, "obj", str.as(*Obj));
     }
 };
 
@@ -106,6 +111,7 @@ pub fn init() VM {
 pub fn free(self: *VM) void {
     self.memory.freeObjects();
     self.strings.deinit(&self.memory.allocator);
+    self.globals.deinit(&self.memory.allocator);
 }
 pub fn interpret(self: *VM, source: []const u8) Error!void {
     var chunk = Chunk.init(&self.memory.allocator);
@@ -167,10 +173,34 @@ fn run(self: *VM) Error!void {
         const instruction = frame.readByte();
         try switch (@intToEnum(OpCode, instruction)) {
             .Return => {
+                // Exit the interpreter.
+                return;
+            },
+            .Pop => _ = self.pop(),
+            .DefineGlobal => {
+                const name = frame.readString();
+                try self.globals.put(&self.memory.allocator, name.chars[0..mem.len(name.chars)], self.peek(0));
+                _ = self.pop();
+            },
+            .GetGlobal => {
+                const name = frame.readString();
+                const value = self.globals.get(name.chars[0..mem.len(name.chars)]) orelse {
+                    return self.runtimeError("Undefined variable '{s}'", .{name.chars});
+                };
+                self.push(value);
+            },
+            .SetGlobal => {
+                const name = frame.readString();
+                if (!self.globals.contains(name.chars[0..mem.len(name.chars)])) {
+                    return self.runtimeError("Undefined variabl '{s}'", .{name.chars});
+                } else {
+                    try self.globals.put(&self.memory.allocator, name.chars[0..mem.len(name.chars)], self.peek(0));
+                }
+            },
+            .Print => {
                 const value = self.pop();
                 const writer = std.io.getStdOut().writer();
                 try writer.print("{d:.2}\n", .{value});
-                return;
             },
             .Constant => {
                 const v = frame.readConstant();

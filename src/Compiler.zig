@@ -40,7 +40,7 @@ const Precedence = enum {
 };
 
 const ParseRule = struct {
-    const ParseFn = fn (*Parser) Error!void;
+    const ParseFn = fn (*Parser, bool) Error!void;
     prefix: ?ParseFn = null,
     infix: ?ParseFn = null,
     precedence: Precedence = .None,
@@ -72,7 +72,7 @@ fn errorAt(self: *Parser, token: *Token, message: []const u8, err: Error) Error 
             Scanner.Error.UnexpectedCharacter => "unexpected character",
             else => {
                 try stderr.print("Unexpected system err: {}", .{err});
-                @panic("unexpected erro");
+                @panic("unexpected error");
             },
         };
     } else {
@@ -104,6 +104,14 @@ fn consume(self: *Parser, id: TokenType, comptime message: []const u8) Error!voi
 
     return self.errorAtCurrent(message);
 }
+fn check(self: *Parser, id: TokenType) bool {
+    return self.current.type == id;
+}
+fn match(self: *Parser, id: TokenType) Error!bool {
+    if (!self.check(id)) return false;
+    try self.advance();
+    return true;
+}
 fn emitByte(self: *Parser, byte: u8) Error!void {
     try self.currentChunk().push_code(byte, @truncate(u8, self.previous.line));
 }
@@ -129,7 +137,7 @@ fn endCompiler(self: *Parser) Error!void {
     if (options.debug_print_code and !self.had_error)
         try Chunk.disassembleChunk(self.currentChunk(), "code");
 }
-fn binary(self: *Parser) Error!void {
+fn binary(self: *Parser, _: bool) Error!void {
     const operator_type = self.previous.type;
     const rule = getRule(operator_type);
     try self.parsePrecedence(@intToEnum(Precedence, @enumToInt(rule.precedence) + 1));
@@ -148,7 +156,7 @@ fn binary(self: *Parser) Error!void {
         else => unreachable,
     }
 }
-fn literal(self: *Parser) Error!void {
+fn literal(self: *Parser, _: bool) Error!void {
     switch (self.previous.type) {
         .False => try self.emitByte(@enumToInt(OpCode.False)),
         .Nil => try self.emitByte(@enumToInt(OpCode.Nil)),
@@ -156,18 +164,30 @@ fn literal(self: *Parser) Error!void {
         else => unreachable,
     }
 }
-fn grouping(self: *Parser) Error!void {
+fn grouping(self: *Parser, _: bool) Error!void {
     try self.expression();
     try self.consume(.RightParen, "Expect ')' after expression.");
 }
-fn number(self: *Parser) Error!void {
+fn number(self: *Parser, _: bool) Error!void {
     const value = try std.fmt.parseFloat(f64, self.previous.start);
     try self.emitConstant(numberVal(value));
 }
-fn string(self: *Parser) Error!void {
+fn string(self: *Parser, _: bool) Error!void {
     try self.emitConstant(objVal(&(try self.allocator.copyString(self.previous.start[1 .. self.previous.start.len - 1])).obj));
 }
-fn unary(self: *Parser) Error!void {
+fn namedVariable(self: *Parser, name: Token, can_assign: bool) Error!void {
+    const arg = try self.identifierConstant(&name);
+    if (can_assign and try self.match(.Equal)) {
+        try self.expression();
+        try self.emitBytes(@enumToInt(OpCode.SetGlobal), arg);
+    } else {
+        try self.emitBytes(@enumToInt(OpCode.GetGlobal), arg);
+    }
+}
+fn variable(self: *Parser, can_assign: bool) Error!void {
+    try self.namedVariable(self.previous, can_assign);
+}
+fn unary(self: *Parser, _: bool) Error!void {
     const operator_type = self.previous.type;
 
     // Compile the operand
@@ -220,7 +240,7 @@ const rules: [39]ParseRule = [39]ParseRule{
     // LessEqual
     .{ .infix = binary, .precedence = .Comparison },
     // Identifier
-    .{},
+    .{ .prefix = variable },
     // String
     .{ .prefix = string },
     // Number
@@ -266,13 +286,28 @@ fn parsePrecedence(self: *Parser, precedence: Precedence) Error!void {
         return self.error_("Expect expression.");
     };
 
-    try prefixRule(self);
+    const can_assign = @enumToInt(precedence) <= @enumToInt(Precedence.Assignment);
+    try prefixRule(self, can_assign);
 
     while (@enumToInt(precedence) <= @enumToInt(getRule(self.current.type).precedence)) {
         try self.advance();
         const infixRule = getRule(self.previous.type).infix.?;
-        try infixRule(self);
+        try infixRule(self, can_assign);
     }
+
+    if (can_assign and try self.match(.Equal)) {
+        return self.error_("Invalid assignment target");
+    }
+}
+fn identifierConstant(self: *Parser, name: *const Token) Error!u8 {
+    return try self.makeConstant(objVal(&(try self.allocator.copyString(name.start)).obj));
+}
+fn parseVariable(self: *Parser, comptime error_message: []const u8) Error!u8 {
+    try self.consume(.Identifier, error_message);
+    return try self.identifierConstant(&self.previous);
+}
+fn defineVariable(self: *Parser, global: u8) Error!void {
+    try self.emitBytes(@enumToInt(OpCode.DefineGlobal), global);
 }
 fn getRule(id: TokenType) *const ParseRule {
     return &rules[@enumToInt(id)];
@@ -280,11 +315,62 @@ fn getRule(id: TokenType) *const ParseRule {
 fn expression(self: *Parser) Error!void {
     try self.parsePrecedence(.Assignment);
 }
+fn varDeclaration(self: *Parser) Error!void {
+    const global = try self.parseVariable("Expect variable name");
+
+    if (try self.match(.Equal)) {
+        try self.expression();
+    } else {
+        try self.emitByte(@enumToInt(OpCode.Nil));
+    }
+
+    try self.consume(.Semicolon, "Expect ';' after variable declaration.");
+    try self.defineVariable(global);
+}
+fn expressionStatement(self: *Parser) Error!void {
+    try self.expression();
+    try self.consume(.Semicolon, "Expect ';' after expression.");
+    try self.emitByte(@enumToInt(OpCode.Pop));
+}
+fn printStatement(self: *Parser) Error!void {
+    try self.expression();
+    try self.consume(.Semicolon, "Expect ';' after value.");
+    try self.emitByte(@enumToInt(OpCode.Print));
+}
+fn synchronize(self: *Parser) void {
+    self.panic_mode = false;
+
+    while (self.current.type != .Eof) {
+        if (self.previous.type == .Semicolon) return;
+        switch (self.current.type) {
+            .Class, .Fun, .Var, .For, .If, .While, .Print, .Return => return,
+            else => self.advance() catch self.synchronize(),
+        }
+    }
+}
+fn declaration(self: *Parser) void {
+    if (self.match(.Var) catch {
+        self.synchronize();
+        return;
+    }) {
+        self.varDeclaration() catch self.synchronize();
+    } else {
+        self.statement() catch self.synchronize();
+    }
+}
+fn statement(self: *Parser) Error!void {
+    if (try self.match(.Print)) {
+        try self.printStatement();
+    } else {
+        try self.expressionStatement();
+    }
+}
 pub fn compile(self: *Parser, chunk: *Chunk) Error!void {
     self.compiling_chunk = chunk;
     try self.advance();
-    try self.expression();
-    try self.consume(.Eof, "Expect end of expression.");
+    while (!try self.match(.Eof)) {
+        self.declaration();
+    }
     try self.endCompiler();
     if (self.had_error) return error.Compiler;
 }

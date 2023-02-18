@@ -58,7 +58,7 @@ pub fn disassembleInstruction(chunk: *const Chunk, offset: usize, writer: anytyp
     }
     const instruction = @intToEnum(OpCode, chunk.code.items[offset]);
     switch (instruction) {
-        .Constant => return try constantInstruction(chunk, instruction, offset, writer),
+        .Constant, .DefineGlobal, .GetGlobal, .SetGlobal => return try constantInstruction(chunk, instruction, offset, writer),
         else => return try simpleInstruction(instruction, offset, writer),
     }
 }
@@ -71,6 +71,9 @@ pub const OpCode = enum(u8) {
     Nil,
     True,
     False,
+    DefineGlobal,
+    GetGlobal,
+    SetGlobal,
     Equal,
     Greater,
     Less,
@@ -80,6 +83,8 @@ pub const OpCode = enum(u8) {
     Divide,
     Not,
     Negate,
+    Print,
+    Pop,
     Return,
     pub fn format(self: OpCode, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         var tag_name: [255]u8 = undefined;
