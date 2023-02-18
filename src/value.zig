@@ -82,9 +82,8 @@ pub const Value = union(ValueType) {
             .number => |n| return n == other.as(f64),
             .nil => return true,
             .obj => |obj| {
-                const a_string = @fieldParentPtr(ObjString, "obj", obj);
-                const b_string = @fieldParentPtr(ObjString, "obj", other.as(*Obj));
-                return mem.eql(u8, a_string.chars[0..mem.len(a_string.chars)], b_string.chars[0..mem.len(b_string.chars)]);
+                const b = other.as(*Obj);
+                return obj == b;
             },
         }
     }

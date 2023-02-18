@@ -34,7 +34,7 @@ fn resize(allocator: *Allocator, buf: []u8, buf_align: u29, new_len: usize, len_
     return try self.backing_allocator.resizeFn(self.backing_allocator, buf, buf_align, new_len, len_align, ret_addr);
 }
 
-pub inline fn allocateObj(self: *VmAllocator, comptime T: type, id: ObjType) Error!*Obj {
+pub fn allocateObj(self: *VmAllocator, comptime T: type, id: ObjType) Error!*Obj {
     var obj = try self.allocator.create(T);
     const vm = @fieldParentPtr(VM, "memory", self);
     obj.* = T{
@@ -46,12 +46,23 @@ pub inline fn allocateObj(self: *VmAllocator, comptime T: type, id: ObjType) Err
 fn allocateString(self: *VmAllocator, chars: [*:0]u8) Error!*ObjString {
     var string = @fieldParentPtr(ObjString, "obj", try self.allocateObj(ObjString, .String));
     string.chars = chars;
+    const vm = @fieldParentPtr(VM, "memory", self);
+    try vm.strings.put(&self.allocator, string.chars[0..mem.len(string.chars)], string);
     return string;
 }
 pub fn takeString(self: *VmAllocator, chars: [*:0]u8) Error!*ObjString {
+    const vm = @fieldParentPtr(VM, "memory", self);
+    const interned = vm.strings.get(chars[0..mem.len(chars)]);
+    if (interned) |ptr| {
+        self.allocator.free(chars[0..mem.len(chars)]);
+        return ptr;
+    }
     return try self.allocateString(chars);
 }
 pub fn copyString(self: *VmAllocator, chars: []const u8) Error!*ObjString {
+    const vm = @fieldParentPtr(VM, "memory", self);
+    const interned = vm.strings.get(chars);
+    if (interned) |ptr| return ptr;
     var heap_chars = try self.allocator.allocSentinel(u8, chars.len, 0);
     mem.copy(u8, heap_chars[0..mem.len(heap_chars)], chars);
     return try self.allocateString(heap_chars);

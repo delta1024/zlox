@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const options = @import("build_options");
+const Table = std.StringHashMapUnmanaged;
 const Chunk = @import("./Chunk.zig");
 const OpCode = Chunk.OpCode;
 const Compiler = @import("./Compiler.zig");
@@ -37,6 +38,7 @@ pub const Error = error{
 
 frame: Frame = undefined,
 memory: VmAllocator = VmAllocator{},
+strings: Table(*ObjString) = Table(*ObjString){},
 objects: ?*Obj = null,
 stack_top: usize = 0,
 stack: [options.stack_max]Value = undefined,
@@ -103,6 +105,7 @@ pub fn init() VM {
 }
 pub fn free(self: *VM) void {
     self.memory.freeObjects();
+    self.strings.deinit(&self.memory.allocator);
 }
 pub fn interpret(self: *VM, source: []const u8) Error!void {
     var chunk = Chunk.init(&self.memory.allocator);
