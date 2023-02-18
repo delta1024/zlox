@@ -8,8 +8,10 @@ const Chunk = @import("./Chunk.zig");
 const OpCode = Chunk.OpCode;
 const val_mod = @import("./value.zig");
 const Value = val_mod.Value;
+const Allocator = @import("./memory.zig");
 const numberVal = val_mod.numberVal;
 const boolVal = val_mod.boolVal;
+const objVal = val_mod.objValue;
 
 pub const Error = error{ UnterminatedString, UnexpectedCharacter, Compiler, OutOfMemory, ParseIntError } || Scanner.Error || Chunk.Error || std.fmt.ParseIntError;
 
@@ -17,6 +19,7 @@ compiling_chunk: *Chunk = undefined,
 current: Token = undefined,
 previous: Token = undefined,
 scanner: Scanner,
+allocator: *Allocator,
 had_error: bool = false,
 panic_mode: bool = false,
 
@@ -43,9 +46,10 @@ const ParseRule = struct {
     precedence: Precedence = .None,
 };
 
-pub fn init(source: []const u8) Parser {
+pub fn init(source: []const u8, allocator: *Allocator) Parser {
     return .{
         .scanner = .{ .source = source },
+        .allocator = allocator,
     };
 }
 
@@ -160,6 +164,9 @@ fn number(self: *Parser) Error!void {
     const value = try std.fmt.parseFloat(f64, self.previous.start);
     try self.emitConstant(numberVal(value));
 }
+fn string(self: *Parser) Error!void {
+    try self.emitConstant(objVal(&(try self.allocator.copyString(self.previous.start[1 .. self.previous.start.len - 1])).obj));
+}
 fn unary(self: *Parser) Error!void {
     const operator_type = self.previous.type;
 
@@ -215,7 +222,7 @@ const rules: [39]ParseRule = [39]ParseRule{
     // Identifier
     .{},
     // String
-    .{},
+    .{ .prefix = string },
     // Number
     .{ .prefix = number },
     // And

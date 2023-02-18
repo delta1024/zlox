@@ -1,5 +1,9 @@
 const std = @import("std");
-pub const ValueType = enum { boolean, nil, number };
+const mem = std.mem;
+const obj_mod = @import("./object.zig");
+const Obj = obj_mod.Obj;
+pub const ValueType = enum { boolean, nil, number, obj };
+const ObjString = obj_mod.ObjString;
 pub inline fn numberVal(val: f64) Value {
     return Value{ .number = val };
 }
@@ -9,15 +13,22 @@ pub inline fn boolVal(val: bool) Value {
 pub inline fn nilVal() Value {
     return .{ .nil = .{} };
 }
+pub inline fn objValue(val: *Obj) Value {
+    return .{
+        .obj = val,
+    };
+}
 pub const Value = union(ValueType) {
     boolean: bool,
     number: f64,
+    obj: *Obj,
     nil,
     pub fn id(self: *const Value) ValueType {
         return switch (self.*) {
             .boolean => .boolean,
             .number => .number,
             .nil => .nil,
+            .obj => .obj,
         };
     }
     pub fn is(self: *const Value, comptime T: type) bool {
@@ -25,6 +36,16 @@ pub const Value = union(ValueType) {
             .nil => T == void,
             .number => T == f64,
             .boolean => T == bool,
+            .obj => T == Obj,
+        };
+    }
+    pub fn isObjType(self: *const Value, comptime T: type) bool {
+        return switch (self.*) {
+            .obj => |obj| switch (T) {
+                ObjString => T == ObjString,
+                else => false,
+            },
+            else => false,
         };
     }
 
@@ -36,6 +57,10 @@ pub const Value = union(ValueType) {
             },
             bool => switch (self) {
                 .boolean => |b| return b,
+                else => unreachable,
+            },
+            *Obj => switch (self) {
+                .obj => |p| return p,
                 else => unreachable,
             },
             else => unreachable,
@@ -56,6 +81,11 @@ pub const Value = union(ValueType) {
             .boolean => |b| return b == other.as(bool),
             .number => |n| return n == other.as(f64),
             .nil => return true,
+            .obj => |obj| {
+                const a_string = @fieldParentPtr(ObjString, "obj", obj);
+                const b_string = @fieldParentPtr(ObjString, "obj", other.as(*Obj));
+                return mem.eql(u8, a_string.chars[0..mem.len(a_string.chars)], b_string.chars[0..mem.len(b_string.chars)]);
+            },
         }
     }
     pub fn format(self: *const Value, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -65,6 +95,7 @@ pub const Value = union(ValueType) {
             } else try writer.print("false", .{}),
             .number => |n| try writer.print("{d:.2}", .{n}),
             .nil => try writer.print("nil", .{}),
+            .obj => |o| try o.format(fmt, options, writer),
         }
     }
 };

@@ -12,6 +12,10 @@ const Value = val_mod.Value;
 const numberVal = val_mod.numberVal;
 const boolVal = val_mod.boolVal;
 const nilVal = val_mod.nilVal;
+const objVal = val_mod.objValue;
+const obj_mod = @import("./object.zig");
+const Obj = obj_mod.Obj;
+const ObjString = obj_mod.ObjString;
 const os = std.os;
 // zig fmt: off
 pub const Error = error{ 
@@ -33,6 +37,7 @@ pub const Error = error{
 
 frame: Frame = undefined,
 memory: VmAllocator = VmAllocator{},
+objects: ?*Obj = null,
 stack_top: usize = 0,
 stack: [options.stack_max]Value = undefined,
 
@@ -96,11 +101,13 @@ pub fn init() VM {
     vm.resetStack();
     return vm;
 }
-pub fn free(self: *VM) void {}
+pub fn free(self: *VM) void {
+    self.memory.freeObjects();
+}
 pub fn interpret(self: *VM, source: []const u8) Error!void {
     var chunk = Chunk.init(&self.memory.allocator);
     defer chunk.deinit();
-    var parser = Compiler.init(source);
+    var parser = Compiler.init(source, &self.memory);
     try parser.compile(&chunk);
     self.frame = Frame.init(&chunk);
 
@@ -129,6 +136,17 @@ fn binaryOp(self: *VM, op: OpCode) Error!void {
         }),
         else => unreachable,
     });
+}
+fn concatenate(self: *VM) Error!void {
+    const b = @fieldParentPtr(ObjString, "obj", self.pop().as(*Obj));
+    const a = @fieldParentPtr(ObjString, "obj", self.pop().as(*Obj));
+
+    const length = mem.len(a.chars) + mem.len(b.chars) + 1;
+    var chars = try self.memory.allocator.allocSentinel(u8, length + 1, 0);
+    mem.copy(u8, chars[0..mem.len(a.chars)], a.chars[0..mem.len(a.chars)]);
+    mem.copy(u8, chars[mem.len(a.chars)..length], b.chars[0..mem.len(b.chars)]);
+    const result = try self.memory.takeString(chars);
+    self.push(objVal(&result.obj));
 }
 fn run(self: *VM) Error!void {
     var frame: *Frame = &self.frame;
@@ -164,7 +182,18 @@ fn run(self: *VM) Error!void {
                 self.push(boolVal(a.equals(b)));
             },
             .Greater, .Less => self.binaryOp(@intToEnum(OpCode, instruction)),
-            .Add, .Subtract, .Multiply, .Divide => self.binaryOp(@intToEnum(OpCode, instruction)),
+            .Add => {
+                if (self.peek(0).isObjType(ObjString) and self.peek(1).isObjType(ObjString)) {
+                    try self.concatenate();
+                } else if (self.peek(0).is(f64) and self.peek(1).is(f64)) {
+                    const b = self.pop().as(f64);
+                    const a = self.pop().as(f64);
+                    self.push(numberVal(a + b));
+                } else {
+                    return self.runtimeError("Operands must be two numbers or two strings.", .{});
+                }
+            },
+            .Subtract, .Multiply, .Divide => self.binaryOp(@intToEnum(OpCode, instruction)),
             .Not => {
                 self.push(boolVal(self.pop().isFalsey()));
             },
