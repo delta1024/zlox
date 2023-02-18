@@ -43,10 +43,15 @@ fn simpleInstruction(instruction: OpCode, offset: usize, writer: anytype) !usize
     try writer.print("{}\n", .{instruction});
     return offset + 1;
 }
+fn byteInstruction(chunk: *const Chunk, instruction: OpCode, offset: usize, writer: anytype) !usize {
+    const slot = chunk.code.items[offset + 1];
+    try writer.print("{: >16} {d:4}\n", .{ instruction, slot });
+    return offset + 2;
+}
 fn constantInstruction(chunk: *const Chunk, instruction: OpCode, offset: usize, writer: anytype) !usize {
     const pos = chunk.code.items[offset + 1];
 
-    try writer.print("{: >16} {d} '{}'\n", .{ instruction, pos, chunk.constants.items[pos] });
+    try writer.print("{: >16} {d:4} '{}'\n", .{ instruction, pos, chunk.constants.items[pos] });
     return offset + 2;
 }
 pub fn disassembleInstruction(chunk: *const Chunk, offset: usize, writer: anytype) !usize {
@@ -59,6 +64,7 @@ pub fn disassembleInstruction(chunk: *const Chunk, offset: usize, writer: anytyp
     const instruction = @intToEnum(OpCode, chunk.code.items[offset]);
     switch (instruction) {
         .Constant, .DefineGlobal, .GetGlobal, .SetGlobal => return try constantInstruction(chunk, instruction, offset, writer),
+        .GetLocal, .SetLocal => return try byteInstruction(chunk, instruction, offset, writer),
         else => return try simpleInstruction(instruction, offset, writer),
     }
 }
@@ -74,6 +80,8 @@ pub const OpCode = enum(u8) {
     DefineGlobal,
     GetGlobal,
     SetGlobal,
+    GetLocal,
+    SetLocal,
     Equal,
     Greater,
     Less,
@@ -87,35 +95,33 @@ pub const OpCode = enum(u8) {
     Pop,
     Return,
     pub fn format(self: OpCode, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        var tag_name: [255]u8 = undefined;
-        var i: usize = if (options.alignment == .Left or options.alignment == .Center) bk: {
-            var j: usize = 0;
-            const max = options.width orelse 0;
-            while (j < max) : (j += 1) {
-                tag_name[j] = options.fill;
+        const width = options.width orelse 0;
+        var i: usize = 0;
+        if (options.alignment == .Left or options.alignment == .Center) {
+            while (i < width) : (i += 1) {
+                try writer.print("{c}", .{options.fill});
             }
-            break :bk j;
-        } else bk: {
-            break :bk 0;
-        };
-        for ("OP") |c| {
-            tag_name[i] = c;
-            i += 1;
         }
+        const isUpper = std.ascii.isUpper;
+        const toUpper = std.ascii.toUpper;
+        _ = try writer.write("OP");
+        i += 2;
         for (@tagName(self)) |c| {
-            if (std.ascii.isUpper(c)) {
-                tag_name[i] = '_';
+            if (isUpper(c)) {
+                _ = try writer.write("_");
                 i += 1;
+                try writer.print("{c}", .{c});
+                i += 1;
+                continue;
             }
-            tag_name[i] = std.ascii.toUpper(c);
+
+            try writer.print("{c}", .{toUpper(c)});
             i += 1;
         }
         if (options.alignment == .Right or options.alignment == .Center) {
-            while (i < options.width orelse 0) : (i += 1) {
-                tag_name[i] = options.fill;
+            while (i < width) : (i += 1) {
+                try writer.print("{c}", .{options.fill});
             }
         }
-        tag_name[i] = 0;
-        try writer.print("{s}", .{tag_name});
     }
 };

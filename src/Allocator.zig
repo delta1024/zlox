@@ -6,12 +6,15 @@ const Obj = obj_mod.Obj;
 const ObjString = obj_mod.ObjString;
 const ObjType = obj_mod.ObjType;
 const Allocator = mem.Allocator;
+const Table = std.StringHashMapUnmanaged;
 const VmAllocator = @This();
 const VM = @import("./VM.zig");
 pub const Error = error{OutOfMemory} || Allocator.Error;
 bytes_writen: usize = 0,
 bytes_freed: usize = 0,
 backing_allocator: *Allocator = heap.page_allocator,
+strings: Table(*ObjString) = Table(*ObjString){},
+objects: ?*Obj = null,
 allocator: Allocator =
     Allocator{
         .allocFn = alloc,
@@ -36,23 +39,20 @@ fn resize(allocator: *Allocator, buf: []u8, buf_align: u29, new_len: usize, len_
 
 pub fn allocateObj(self: *VmAllocator, comptime T: type, id: ObjType) Error!*Obj {
     var obj = try self.allocator.create(T);
-    const vm = @fieldParentPtr(VM, "memory", self);
     obj.* = T{
-        .obj = .{ .type = id, .next = vm.objects },
+        .obj = .{ .type = id, .next = self.objects },
     };
-    vm.objects = &obj.obj;
+    self.objects = &obj.obj;
     return &obj.obj;
 }
 fn allocateString(self: *VmAllocator, chars: [*:0]u8) Error!*ObjString {
     var string = @fieldParentPtr(ObjString, "obj", try self.allocateObj(ObjString, .String));
     string.chars = chars;
-    const vm = @fieldParentPtr(VM, "memory", self);
-    try vm.strings.put(&self.allocator, string.chars[0..mem.len(string.chars)], string);
+    try self.strings.put(&self.allocator, string.chars[0..mem.len(string.chars)], string);
     return string;
 }
 pub fn takeString(self: *VmAllocator, chars: [*:0]u8) Error!*ObjString {
-    const vm = @fieldParentPtr(VM, "memory", self);
-    const interned = vm.strings.get(chars[0..mem.len(chars)]);
+    const interned = self.strings.get(chars[0..mem.len(chars)]);
     if (interned) |ptr| {
         self.allocator.free(chars[0..mem.len(chars)]);
         return ptr;
@@ -60,16 +60,18 @@ pub fn takeString(self: *VmAllocator, chars: [*:0]u8) Error!*ObjString {
     return try self.allocateString(chars);
 }
 pub fn copyString(self: *VmAllocator, chars: []const u8) Error!*ObjString {
-    const vm = @fieldParentPtr(VM, "memory", self);
-    const interned = vm.strings.get(chars);
+    const interned = self.strings.get(chars);
     if (interned) |ptr| return ptr;
     var heap_chars = try self.allocator.allocSentinel(u8, chars.len, 0);
     mem.copy(u8, heap_chars[0..mem.len(heap_chars)], chars);
     return try self.allocateString(heap_chars);
 }
+pub fn deinit(self: *VmAllocator) void {
+    self.freeObjects();
+    self.strings.deinit(&self.allocator);
+}
 pub fn freeObjects(self: *VmAllocator) void {
-    const vm = @fieldParentPtr(VM, "memory", self);
-    var object = vm.objects;
+    var object = self.objects;
     while (object) |obj| {
         const next = obj.next;
         obj.deinit(&self.allocator);

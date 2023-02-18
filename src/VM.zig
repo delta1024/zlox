@@ -6,17 +6,10 @@ const Chunk = @import("./Chunk.zig");
 const OpCode = Chunk.OpCode;
 const Compiler = @import("./Compiler.zig");
 const mem = std.mem;
-const VmAllocator = @import("./memory.zig");
+const Allocator = @import("./Allocator.zig");
 const VM = @This();
-const val_mod = @import("./value.zig");
-const Value = val_mod.Value;
-const numberVal = val_mod.numberVal;
-const boolVal = val_mod.boolVal;
-const nilVal = val_mod.nilVal;
-const objVal = val_mod.objValue;
-const obj_mod = @import("./object.zig");
-const Obj = obj_mod.Obj;
-const ObjString = obj_mod.ObjString;
+usingnamespace @import("./value.zig");
+usingnamespace @import("./object.zig");
 const os = std.os;
 // zig fmt: off
 pub const Error = error{ 
@@ -33,14 +26,12 @@ pub const Error = error{
     NoSpaceLeft, 
     InputOutput, 
     FileTooBig, 
-    DiskQuota } || VmAllocator.Error || Compiler.Error;
+    DiskQuota } || Allocator.Error || Compiler.Error;
 // zig fmt: on
 
 frame: Frame = undefined,
-memory: VmAllocator = VmAllocator{},
-strings: Table(*ObjString) = Table(*ObjString){},
+memory: Allocator = Allocator{},
 globals: Table(Value) = Table(Value){},
-objects: ?*Obj = null,
 stack_top: usize = 0,
 stack: [options.stack_max]Value = undefined,
 
@@ -109,8 +100,7 @@ pub fn init() VM {
     return vm;
 }
 pub fn free(self: *VM) void {
-    self.memory.freeObjects();
-    self.strings.deinit(&self.memory.allocator);
+    self.memory.deinit();
     self.globals.deinit(&self.memory.allocator);
 }
 pub fn interpret(self: *VM, source: []const u8) Error!void {
@@ -181,6 +171,14 @@ fn run(self: *VM) Error!void {
                 const name = frame.readString();
                 try self.globals.put(&self.memory.allocator, name.chars[0..mem.len(name.chars)], self.peek(0));
                 _ = self.pop();
+            },
+            .GetLocal => {
+                const slot = frame.readByte();
+                self.push(self.stack[slot]);
+            },
+            .SetLocal => {
+                const slot = frame.readByte();
+                self.stack[slot] = self.peek(0);
             },
             .GetGlobal => {
                 const name = frame.readString();

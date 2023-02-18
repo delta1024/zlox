@@ -1,28 +1,39 @@
 const std = @import("std");
+const mem = std.mem;
 const options = @import("build_options");
+usingnamespace @import("./value.zig");
 const Parser = @This();
 const Scanner = @import("./Scanner.zig");
 const Token = Scanner.Token;
 const TokenType = Scanner.TokenType;
 const Chunk = @import("./Chunk.zig");
 const OpCode = Chunk.OpCode;
-const val_mod = @import("./value.zig");
-const Value = val_mod.Value;
-const Allocator = @import("./memory.zig");
-const numberVal = val_mod.numberVal;
-const boolVal = val_mod.boolVal;
-const objVal = val_mod.objValue;
+const Allocator = @import("./Allocator.zig");
 
 pub const Error = error{ UnterminatedString, UnexpectedCharacter, Compiler, OutOfMemory, ParseIntError } || Scanner.Error || Chunk.Error || std.fmt.ParseIntError;
 
 compiling_chunk: *Chunk = undefined,
 current: Token = undefined,
 previous: Token = undefined,
+compiler: *Compiler = undefined,
 scanner: Scanner,
 allocator: *Allocator,
 had_error: bool = false,
 panic_mode: bool = false,
 
+pub const UINT8_COUNT = std.math.maxInt(u8) + 1;
+const Compiler = struct {
+    const Local = struct {
+        name: Token = undefined,
+        depth: isize = -1,
+    };
+    locals: [UINT8_COUNT]Local = undefined,
+    local_count: usize = 0,
+    scope_depth: usize = 0,
+    fn markInitialized(self: *Compiler) void {
+        self.locals[self.local_count - 1].depth = @intCast(isize, self.scope_depth);
+    }
+};
 const Precedence = enum {
     // zig fmt: off
     None,
@@ -137,6 +148,20 @@ fn endCompiler(self: *Parser) Error!void {
     if (options.debug_print_code and !self.had_error)
         try Chunk.disassembleChunk(self.currentChunk(), "code");
 }
+fn beginScope(self: *Parser) void {
+    self.compiler.scope_depth += 1;
+}
+fn endScope(self: *Parser) Error!void {
+    self.compiler.scope_depth -= 1;
+
+    // zig fmt: off
+    while (self.compiler.local_count > 0 and 
+        self.compiler.locals[self.compiler.local_count - 1].depth > 
+        self.compiler.scope_depth) : (self.compiler.local_count -= 1) {
+        try self.emitByte(@enumToInt(OpCode.Pop));
+    }
+    // zig fmt: on
+}
 fn binary(self: *Parser, _: bool) Error!void {
     const operator_type = self.previous.type;
     const rule = getRule(operator_type);
@@ -176,12 +201,23 @@ fn string(self: *Parser, _: bool) Error!void {
     try self.emitConstant(objVal(&(try self.allocator.copyString(self.previous.start[1 .. self.previous.start.len - 1])).obj));
 }
 fn namedVariable(self: *Parser, name: Token, can_assign: bool) Error!void {
-    const arg = try self.identifierConstant(&name);
+    var get_op: u8 = undefined;
+    var set_op: u8 = undefined;
+    var arg = try self.resolveLocal(&name);
+    if (arg) |_| {
+        get_op = @enumToInt(OpCode.GetLocal);
+        set_op = @enumToInt(OpCode.SetLocal);
+    } else {
+        arg = try self.identifierConstant(&name);
+        get_op = @enumToInt(OpCode.GetGlobal);
+        set_op = @enumToInt(OpCode.SetGlobal);
+    }
+
     if (can_assign and try self.match(.Equal)) {
         try self.expression();
-        try self.emitBytes(@enumToInt(OpCode.SetGlobal), arg);
+        try self.emitBytes(set_op, arg.?);
     } else {
-        try self.emitBytes(@enumToInt(OpCode.GetGlobal), arg);
+        try self.emitBytes(get_op, arg.?);
     }
 }
 fn variable(self: *Parser, can_assign: bool) Error!void {
@@ -302,11 +338,56 @@ fn parsePrecedence(self: *Parser, precedence: Precedence) Error!void {
 fn identifierConstant(self: *Parser, name: *const Token) Error!u8 {
     return try self.makeConstant(objVal(&(try self.allocator.copyString(name.start)).obj));
 }
+fn addLocal(self: *Parser, name: Token) Error!void {
+    if (self.compiler.local_count == UINT8_COUNT) {
+        return self.error_("Too many variables in function.");
+    }
+    var local = &self.compiler.locals[self.compiler.local_count];
+    self.compiler.local_count += 1;
+    local.name = name;
+    local.depth = -1;
+}
+fn resolveLocal(self: *Parser, name: *const Token) Error!?u8 {
+    var i: usize = self.compiler.local_count - 1;
+    while (i >= 0) : (i -= 1) {
+        const local = &self.compiler.locals[i];
+        if (mem.eql(u8, name.start, local.name.start)) {
+            if (local.depth == -1) {
+                return self.error_("Can't read local variable in it's own initializer.");
+            }
+            return @truncate(u8, i);
+        }
+    }
+    return null;
+}
+fn declareVariable(self: *Parser) Error!void {
+    if (self.compiler.scope_depth == 0) return;
+
+    const name = &self.previous;
+    var i: usize = self.compiler.local_count;
+    while (i >= 0) : (i -= 1) {
+        const local = &self.compiler.locals[i];
+        if (local.depth != -1 and local.depth < self.compiler.scope_depth) {
+            break;
+        }
+        if (mem.eql(u8, name.start, local.name.start)) {
+            return self.error_("Already a variable with this name in this scope.");
+        }
+    }
+    try self.addLocal(name.*);
+}
 fn parseVariable(self: *Parser, comptime error_message: []const u8) Error!u8 {
     try self.consume(.Identifier, error_message);
+    try self.declareVariable();
+    if (self.compiler.scope_depth > 0) return 0;
+
     return try self.identifierConstant(&self.previous);
 }
 fn defineVariable(self: *Parser, global: u8) Error!void {
+    if (self.compiler.scope_depth > 0) {
+        self.compiler.markInitialized();
+        return;
+    }
     try self.emitBytes(@enumToInt(OpCode.DefineGlobal), global);
 }
 fn getRule(id: TokenType) *const ParseRule {
@@ -314,6 +395,13 @@ fn getRule(id: TokenType) *const ParseRule {
 }
 fn expression(self: *Parser) Error!void {
     try self.parsePrecedence(.Assignment);
+}
+fn block(self: *Parser) Error!void {
+    while (!self.check(.RightBrace) and !self.check(.Eof)) {
+        self.declaration();
+    }
+
+    try self.consume(.RightBrace, "Expect '}' after block.");
 }
 fn varDeclaration(self: *Parser) Error!void {
     const global = try self.parseVariable("Expect variable name");
@@ -361,11 +449,17 @@ fn declaration(self: *Parser) void {
 fn statement(self: *Parser) Error!void {
     if (try self.match(.Print)) {
         try self.printStatement();
+    } else if (try self.match(.LeftBrace)) {
+        self.beginScope();
+        try self.block();
+        try self.endScope();
     } else {
         try self.expressionStatement();
     }
 }
 pub fn compile(self: *Parser, chunk: *Chunk) Error!void {
+    var compiler = Compiler{};
+    self.compiler = &compiler;
     self.compiling_chunk = chunk;
     try self.advance();
     while (!try self.match(.Eof)) {

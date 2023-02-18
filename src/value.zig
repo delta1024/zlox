@@ -13,7 +13,7 @@ pub inline fn boolVal(val: bool) Value {
 pub inline fn nilVal() Value {
     return .{ .nil = .{} };
 }
-pub inline fn objValue(val: *Obj) Value {
+pub inline fn objVal(val: *Obj) Value {
     return .{
         .obj = val,
     };
