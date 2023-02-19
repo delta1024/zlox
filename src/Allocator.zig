@@ -1,10 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 const heap = std.heap;
-const obj_mod = @import("./object.zig");
-const Obj = obj_mod.Obj;
-const ObjString = obj_mod.ObjString;
-const ObjType = obj_mod.ObjType;
+usingnamespace @import("./object.zig");
+const Chunk = @import("./Chunk.zig");
 const Allocator = mem.Allocator;
 const Table = std.StringHashMapUnmanaged;
 const VmAllocator = @This();
@@ -36,12 +34,17 @@ fn resize(allocator: *Allocator, buf: []u8, buf_align: u29, new_len: usize, len_
     }
     return try self.backing_allocator.resizeFn(self.backing_allocator, buf, buf_align, new_len, len_align, ret_addr);
 }
-
+pub fn newFunction(self: *VmAllocator) Error!*ObjFunction {
+    var function = @fieldParentPtr(ObjFunction, "obj", try self.allocateObj(ObjFunction, .Function));
+    function.* = .{
+        .chunk = Chunk.init(&self.allocator),
+    };
+    return function;
+}
 pub fn allocateObj(self: *VmAllocator, comptime T: type, id: ObjType) Error!*Obj {
     var obj = try self.allocator.create(T);
-    obj.* = T{
-        .obj = .{ .type = id, .next = self.objects },
-    };
+    obj.* = T.init(&self.allocator);
+    obj.obj.next = self.objects;
     self.objects = &obj.obj;
     return &obj.obj;
 }

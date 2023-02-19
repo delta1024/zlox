@@ -1,9 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
-const obj_mod = @import("./object.zig");
-const Obj = obj_mod.Obj;
+usingnamespace @import("./object.zig");
 pub const ValueType = enum { boolean, nil, number, obj };
-const ObjString = obj_mod.ObjString;
 pub inline fn numberVal(val: f64) Value {
     return Value{ .number = val };
 }
@@ -42,7 +40,8 @@ pub const Value = union(ValueType) {
     pub fn isObjType(self: *const Value, comptime T: type) bool {
         return switch (self.*) {
             .obj => |obj| switch (T) {
-                ObjString => T == ObjString,
+                ObjString => obj.type == .String,
+                ObjFunction => obj.type == .Function,
                 else => false,
             },
             else => false,

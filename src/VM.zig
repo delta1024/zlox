@@ -30,22 +30,28 @@ pub const Error = error{
     DiskQuota } || Allocator.Error || Compiler.Error;
 // zig fmt: on
 
+const FRAMES_MAX = 64;
+const STACK_MAX = FRAMES_MAX * math.maxInt(u8);
 frame: Frame = undefined,
 memory: Allocator = Allocator{},
 globals: Table(Value) = Table(Value){},
+frame_count: usize = 0,
+frames: [FRAMES_MAX]Frame = undefined,
 stack_top: usize = 0,
-stack: [options.stack_max]Value = undefined,
+stack: [STACK_MAX]Value = undefined,
 
 fn resetStack(self: *VM) void {
     self.stack_top = 0;
+    self.frame_count = 0;
 }
 fn runtimeError(self: *VM, comptime format: []const u8, args: anytype) Error {
     const stderr = std.io.getStdErr().writer();
     try stderr.print(format, args);
     _ = try stderr.write("\n");
 
-    const instruction = self.frame.ip.pos - 1;
-    const line = self.frame.chunk.lines.items[instruction];
+    const frame = &self.frames[self.frame_count - 1];
+    const instruction = frame.ip.pos - 1;
+    const line = frame.function.chunk.lines.items[instruction];
     try stderr.print("[line {d}] in script\n", .{line});
     return error.Runtime;
 }
@@ -74,12 +80,14 @@ const Frame = struct {
             return self.code[self.pos - 1];
         }
     };
-    chunk: *Chunk,
+    function: *ObjFunction,
     ip: Ip,
-    fn init(chunk: *Chunk) Frame {
+    slots: []Value,
+    fn init(function: *ObjFunction, slots: []Value) Frame {
         return .{
-            .chunk = chunk,
-            .ip = Ip.init(chunk),
+            .function = function,
+            .ip = Ip.init(&function.chunk),
+            .slots = slots,
         };
     }
     inline fn readByte(self: *Frame) u8 {
@@ -87,7 +95,7 @@ const Frame = struct {
     }
     inline fn readConstant(self: *Frame) Value {
         const index = self.readByte();
-        return self.chunk.constants.items[index];
+        return self.function.chunk.constants.items[index];
     }
     inline fn readString(self: *Frame) *ObjString {
         const str = self.readConstant();
@@ -109,12 +117,13 @@ pub fn free(self: *VM) void {
     self.globals.deinit(&self.memory.allocator);
 }
 pub fn interpret(self: *VM, source: []const u8) Error!void {
-    var chunk = Chunk.init(&self.memory.allocator);
-    defer chunk.deinit();
     var parser = Compiler.init(source, &self.memory);
-    try parser.compile(&chunk);
-    self.frame = Frame.init(&chunk);
+    var function = try parser.compile();
 
+    self.push(objVal(&function.obj));
+    var frame = &self.frames[self.frame_count];
+    self.frame_count += 1;
+    frame.* = Frame.init(function, self.stack[0..]);
     try self.run();
 }
 
@@ -153,7 +162,7 @@ fn concatenate(self: *VM) Error!void {
     self.push(objVal(&result.obj));
 }
 fn run(self: *VM) Error!void {
-    var frame: *Frame = &self.frame;
+    var frame: *Frame = &self.frames[self.frame_count - 1];
     while (true) {
         if (options.debug_trace_execution) {
             var writer = std.io.getStdOut().writer();
@@ -163,7 +172,7 @@ fn run(self: *VM) Error!void {
                 try writer.print("[ {d:.2} ]", .{self.stack[i]});
             }
             try writer.writeAll("\n");
-            _ = try Chunk.disassembleInstruction(frame.chunk, frame.ip.pos, writer);
+            _ = try Chunk.disassembleInstruction(&frame.function.chunk, frame.ip.pos, writer);
         }
         const instruction = frame.readByte();
         try switch (@intToEnum(OpCode, instruction)) {
@@ -191,11 +200,11 @@ fn run(self: *VM) Error!void {
             },
             .GetLocal => {
                 const slot = frame.readByte();
-                self.push(self.stack[slot]);
+                self.push(frame.slots[slot]);
             },
             .SetLocal => {
                 const slot = frame.readByte();
-                self.stack[slot] = self.peek(0);
+                frame.slots[slot] = self.peek(0);
             },
             .GetGlobal => {
                 const name = frame.readString();

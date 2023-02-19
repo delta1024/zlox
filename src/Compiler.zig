@@ -3,6 +3,7 @@ const mem = std.mem;
 const math = std.math;
 const options = @import("build_options");
 usingnamespace @import("./value.zig");
+usingnamespace @import("./object.zig");
 const Parser = @This();
 const Scanner = @import("./Scanner.zig");
 const Token = Scanner.Token;
@@ -13,7 +14,6 @@ const Allocator = @import("./Allocator.zig");
 
 pub const Error = error{ UnterminatedString, UnexpectedCharacter, Compiler, OutOfMemory, ParseIntError } || Scanner.Error || Chunk.Error || std.fmt.ParseIntError;
 
-compiling_chunk: *Chunk = undefined,
 current: Token = undefined,
 previous: Token = undefined,
 compiler: *Compiler = undefined,
@@ -28,9 +28,27 @@ const Compiler = struct {
         name: Token = undefined,
         depth: isize = -1,
     };
+    const FunctionType = enum {
+        Function,
+        Script,
+    };
+    enclosing: ?*Compiler = null,
+    function: *ObjFunction = undefined,
+    type: FunctionType = .Function,
     locals: [UINT8_COUNT]Local = undefined,
     local_count: usize = 0,
     scope_depth: usize = 0,
+    fn init(enclosing: ?*Compiler, allocator: *Allocator, id: FunctionType) Error!Compiler {
+        var compiler = Compiler{};
+        compiler.enclosing = enclosing;
+        compiler.type = id;
+        compiler.function = try allocator.newFunction();
+        var local = &compiler.locals[compiler.local_count];
+        compiler.local_count += 1;
+        local.depth = 0;
+        local.name.start = "";
+        return compiler;
+    }
     fn markInitialized(self: *Compiler) void {
         self.locals[self.local_count - 1].depth = @intCast(isize, self.scope_depth);
     }
@@ -66,7 +84,7 @@ pub fn init(source: []const u8, allocator: *Allocator) Parser {
 }
 
 fn currentChunk(self: *Parser) *Chunk {
-    return self.compiling_chunk;
+    return &self.compiler.function.chunk;
 }
 fn errorAt(self: *Parser, token: *Token, message: []const u8, err: Error) Error {
     if (self.panic_mode) return error.Compiler;
@@ -173,10 +191,12 @@ fn makeConstant(self: *Parser, value: Value) Error!u8 {
 fn emitConstant(self: *Parser, value: Value) Error!void {
     try self.emitBytes(OpCode.Constant, try self.makeConstant(value));
 }
-fn endCompiler(self: *Parser) Error!void {
+fn endCompiler(self: *Parser) Error!*ObjFunction {
     try self.emitReturn();
+    const function = self.compiler.function;
     if (options.debug_print_code and !self.had_error)
-        try Chunk.disassembleChunk(self.currentChunk(), "code");
+        try Chunk.disassembleChunk(self.currentChunk(), if (function.name) |name| name.chars[0..mem.len(name.chars)] else "<script>"[0..]);
+    return function;
 }
 fn beginScope(self: *Parser) void {
     self.compiler.scope_depth += 1;
@@ -581,14 +601,13 @@ fn statement(self: *Parser) Error!void {
         try self.expressionStatement();
     }
 }
-pub fn compile(self: *Parser, chunk: *Chunk) Error!void {
-    var compiler = Compiler{};
+pub fn compile(self: *Parser) Error!*ObjFunction {
+    var compiler = try Compiler.init(null, self.allocator, .Script);
     self.compiler = &compiler;
-    self.compiling_chunk = chunk;
     try self.advance();
     while (!try self.match(.Eof)) {
         self.declaration();
     }
-    try self.endCompiler();
-    if (self.had_error) return error.Compiler;
+    const function = try self.endCompiler();
+    if (self.had_error) return error.Compiler else return function;
 }
