@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const debug = true;
 
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
@@ -16,8 +17,8 @@ pub fn build(b: *std.build.Builder) void {
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.addBuildOption(usize, "stack_max", 255);
-    exe.addBuildOption(bool, "debug_trace_execution", true);
-    exe.addBuildOption(bool, "debug_print_code", true);
+    exe.addBuildOption(bool, "debug_trace_execution", debug);
+    exe.addBuildOption(bool, "debug_print_code", debug);
     exe.install();
 
     const run_cmd = exe.run();

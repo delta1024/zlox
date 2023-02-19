@@ -171,6 +171,10 @@ fn run(self: *VM) Error!void {
                 // Exit the interpreter.
                 return;
             },
+            .Loop => {
+                const offset = frame.readShort();
+                frame.ip.pos -= offset;
+            },
             .JumpIfFalse => {
                 const offset = frame.readShort();
                 if (self.peek(0).isFalsey()) frame.ip.pos += offset;

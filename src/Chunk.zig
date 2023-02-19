@@ -51,7 +51,7 @@ fn byteInstruction(chunk: *const Chunk, instruction: OpCode, offset: usize, writ
 fn jumpInstruction(chunk: *const Chunk, instruction: OpCode, sign: isize, offset: usize, writer: anytype) !usize {
     var jump = std.math.shl(u16, @intCast(u16, chunk.code.items[offset + 1]), 8);
     jump |= chunk.code.items[offset + 2];
-    try writer.print("{: >16} {d:4} -> {d}\n", .{ instruction, offset, @bitCast(isize, offset) + 2 + sign + @bitCast(i16, jump) });
+    try writer.print("{: >16} {d:4} -> {d}\n", .{ instruction, offset, @bitCast(isize, offset) + 3 + sign * @bitCast(i16, jump) });
     return offset + 3;
 }
 fn constantInstruction(chunk: *const Chunk, instruction: OpCode, offset: usize, writer: anytype) !usize {
@@ -69,6 +69,7 @@ pub fn disassembleInstruction(chunk: *const Chunk, offset: usize, writer: anytyp
     }
     const instruction = @intToEnum(OpCode, chunk.code.items[offset]);
     switch (instruction) {
+        .Loop => return try jumpInstruction(chunk, instruction, -1, offset, writer),
         .Jump, .JumpIfFalse => return try jumpInstruction(chunk, instruction, 1, offset, writer),
         .Constant, .DefineGlobal, .GetGlobal, .SetGlobal => return try constantInstruction(chunk, instruction, offset, writer),
         .GetLocal, .SetLocal => return try byteInstruction(chunk, instruction, offset, writer),
@@ -102,6 +103,7 @@ pub const OpCode = enum(u8) {
     JumpIfFalse,
     Jump,
     Pop,
+    Loop,
     Return,
     pub fn format(self: OpCode, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         const width = options.width orelse 0;

@@ -135,6 +135,15 @@ fn emitBytes(self: *Parser, byte1: anytype, byte2: anytype) Error!void {
     try self.emitByte(byte1);
     try self.emitByte(byte2);
 }
+fn emitLoop(self: *Parser, loop_start: usize) Error!void {
+    try self.emitByte(OpCode.Loop);
+
+    const offset = self.currentChunk().code.items.len - loop_start + 2;
+    if (offset > math.maxInt(u16)) return self.error_("Loop body too large.");
+
+    try self.emitByte(@truncate(u8, math.shr(u16, @truncate(u16, offset), 8)) & 0xff);
+    try self.emitByte(@truncate(u8, offset) & 0xff);
+}
 fn emitJump(self: *Parser, instruction: OpCode) Error!usize {
     try self.emitByte(instruction);
     try self.emitByte(0xff);
@@ -380,7 +389,7 @@ fn addLocal(self: *Parser, name: Token) Error!void {
 fn resolveLocal(self: *Parser, name: *const Token) Error!?u8 {
     var i: isize = @bitCast(isize, self.compiler.local_count) - 1;
     while (i >= 0) : (i -= 1) {
-        const local = &self.compiler.locals[@bitCast(usize,i)];
+        const local = &self.compiler.locals[@bitCast(usize, i)];
         if (mem.eql(u8, name.start, local.name.start)) {
             if (local.depth == -1) {
                 return self.error_("Can't read local variable in it's own initializer.");
@@ -457,6 +466,47 @@ fn expressionStatement(self: *Parser) Error!void {
     try self.consume(.Semicolon, "Expect ';' after expression.");
     try self.emitByte(OpCode.Pop);
 }
+fn forStatement(self: *Parser) Error!void {
+    self.beginScope();
+    try self.consume(.LeftParen, "Expect '(' after 'for'.");
+    if (try self.match(.Semicolon)) {
+        // No initializer.
+    } else if (try self.match(.Var)) {
+        try self.varDeclaration();
+    } else {
+        try self.expressionStatement();
+    }
+
+    var loop_start = self.currentChunk().code.items.len;
+    var exit_jump: ?usize = null;
+    if (!try self.match(.Semicolon)) {
+        try self.expression();
+        try self.consume(.Semicolon, "Expect ';' after loop condition.");
+
+        // Jump out of the loop if the condition is false.
+        exit_jump = try self.emitJump(OpCode.JumpIfFalse);
+        try self.emitByte(OpCode.Pop); // Condition.
+    }
+
+    if (!try self.match(.RightParen)) {
+        const body_jump = try self.emitJump(OpCode.Jump);
+        const increment_start = self.currentChunk().code.items.len;
+        try self.expression();
+        try self.emitByte(OpCode.Pop);
+        try self.consume(.RightParen, "Expect ')' after for clauses.");
+
+        try self.emitLoop(loop_start);
+        loop_start = increment_start;
+        try self.patchJump(body_jump);
+    }
+    try self.statement();
+    try self.emitLoop(loop_start);
+    if (exit_jump) |jump| {
+        try self.patchJump(jump);
+        try self.emitByte(OpCode.Pop); // Condition.
+    }
+    try self.endScope();
+}
 fn ifStatement(self: *Parser) Error!void {
     try self.consume(.LeftParen, "Expect '(' after 'if'");
     try self.expression();
@@ -477,6 +527,21 @@ fn printStatement(self: *Parser) Error!void {
     try self.expression();
     try self.consume(.Semicolon, "Expect ';' after value.");
     try self.emitByte(OpCode.Print);
+}
+fn whileStatement(self: *Parser) Error!void {
+    const loop_start = self.currentChunk().code.items.len;
+
+    try self.consume(.LeftParen, "Expect '(' after 'while'.");
+    try self.expression();
+    try self.consume(.RightParen, "Expect ')' after conditon.");
+
+    const exit_jump = try self.emitJump(.JumpIfFalse);
+    try self.emitByte(OpCode.Pop);
+    try self.statement();
+    try self.emitLoop(loop_start);
+
+    try self.patchJump(exit_jump);
+    try self.emitByte(OpCode.Pop);
 }
 fn synchronize(self: *Parser) void {
     self.panic_mode = false;
@@ -502,8 +567,12 @@ fn declaration(self: *Parser) void {
 fn statement(self: *Parser) Error!void {
     if (try self.match(.Print)) {
         try self.printStatement();
+    } else if (try self.match(.For)) {
+        try self.forStatement();
     } else if (try self.match(.If)) {
         try self.ifStatement();
+    } else if (try self.match(.While)) {
+        try self.whileStatement();
     } else if (try self.match(.LeftBrace)) {
         self.beginScope();
         try self.block();
