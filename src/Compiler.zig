@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const math = std.math;
 const options = @import("build_options");
 usingnamespace @import("./value.zig");
 const Parser = @This();
@@ -129,6 +130,22 @@ fn emitByte(self: *Parser, byte: u8) Error!void {
 fn emitBytes(self: *Parser, byte1: u8, byte2: u8) Error!void {
     try self.emitByte(byte1);
     try self.emitByte(byte2);
+}
+fn emitJump(self: *Parser, instruction: OpCode) Error!usize {
+    try self.emitByte(@enumToInt(instruction));
+    try self.emitByte(0xff);
+    try self.emitByte(0xff);
+    return self.currentChunk().code.items.len - 2;
+}
+fn patchJump(self: *Parser, offset: usize) Error!void {
+    // -2 to adjust for the jump offset itself.
+    const jump = self.currentChunk().code.items.len - offset - 2;
+
+    if (jump > math.maxInt(u16)) {
+        return self.error_("Too much code to jump over");
+    }
+    self.currentChunk().code.items[offset] = @truncate(u8, math.shr(u16, @truncate(u16, jump), 8)) & 0xff;
+    self.currentChunk().code.items[offset + 1] = @truncate(u8, jump) & 0xff;
 }
 fn emitReturn(self: *Parser) Error!void {
     try self.emitByte(@enumToInt(OpCode.Return));
@@ -420,6 +437,22 @@ fn expressionStatement(self: *Parser) Error!void {
     try self.consume(.Semicolon, "Expect ';' after expression.");
     try self.emitByte(@enumToInt(OpCode.Pop));
 }
+fn ifStatement(self: *Parser) Error!void {
+    try self.consume(.LeftParen, "Expect '(' after 'if'");
+    try self.expression();
+    try self.consume(.RightParen, "Expect ')' after condition.");
+
+    const then_jump = try self.emitJump(.JumpIfFalse);
+    try self.emitByte(@enumToInt(OpCode.Pop));
+    try self.statement();
+    const else_jump = try self.emitJump(.Jump);
+
+    try self.patchJump(then_jump);
+    try self.emitByte(@enumToInt(OpCode.Pop));
+
+    if (try self.match(.Else)) try self.statement();
+    try self.patchJump(else_jump);
+}
 fn printStatement(self: *Parser) Error!void {
     try self.expression();
     try self.consume(.Semicolon, "Expect ';' after value.");
@@ -449,6 +482,8 @@ fn declaration(self: *Parser) void {
 fn statement(self: *Parser) Error!void {
     if (try self.match(.Print)) {
         try self.printStatement();
+    } else if (try self.match(.If)) {
+        try self.ifStatement();
     } else if (try self.match(.LeftBrace)) {
         self.beginScope();
         try self.block();

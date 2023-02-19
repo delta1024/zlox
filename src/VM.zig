@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const options = @import("build_options");
+const math = std.math;
 const Table = std.StringHashMapUnmanaged;
 const Chunk = @import("./Chunk.zig");
 const OpCode = Chunk.OpCode;
@@ -92,6 +93,10 @@ const Frame = struct {
         const str = self.readConstant();
         return @fieldParentPtr(ObjString, "obj", str.as(*Obj));
     }
+    inline fn readShort(self: *Frame) u16 {
+        self.ip.pos += 2;
+        return math.shl(u16, @intCast(u16, self.ip.code[self.ip.pos - 2]), 8) | self.ip.code[self.ip.pos - 1];
+    }
 };
 
 pub fn init() VM {
@@ -165,6 +170,14 @@ fn run(self: *VM) Error!void {
             .Return => {
                 // Exit the interpreter.
                 return;
+            },
+            .JumpIfFalse => {
+                const offset = frame.readShort();
+                if (self.peek(0).isFalsey()) frame.ip.pos += offset;
+            },
+            .Jump => {
+                const offset = frame.readShort();
+                frame.ip.pos += offset;
             },
             .Pop => _ = self.pop(),
             .DefineGlobal => {
