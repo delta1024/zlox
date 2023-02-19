@@ -49,11 +49,11 @@ fn byteInstruction(chunk: *const Chunk, instruction: OpCode, offset: usize, writ
     return offset + 2;
 }
 fn jumpInstruction(chunk: *const Chunk, instruction: OpCode, sign: isize, offset: usize, writer: anytype) !usize {
-var jump = std.math.shl(u16, @intCast(u16, chunk.code.items[offset + 1]), 8);
-jump |= chunk.code.items[offset + 2];
-try writer.print("{: >16} {d:4} -> {d}\n", .{instruction, offset, @bitCast(isize, offset) + 2 + sign +  @bitCast(i16, jump)});
-return offset + 3;
-    }
+    var jump = std.math.shl(u16, @intCast(u16, chunk.code.items[offset + 1]), 8);
+    jump |= chunk.code.items[offset + 2];
+    try writer.print("{: >16} {d:4} -> {d}\n", .{ instruction, offset, @bitCast(isize, offset) + 2 + sign + @bitCast(i16, jump) });
+    return offset + 3;
+}
 fn constantInstruction(chunk: *const Chunk, instruction: OpCode, offset: usize, writer: anytype) !usize {
     const pos = chunk.code.items[offset + 1];
 

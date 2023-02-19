@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
@@ -27,4 +28,10 @@ pub fn build(b: *std.build.Builder) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    const out_dir = b.addRemoveDirTree("./zig-out/");
+    const cache_dir = b.addRemoveDirTree("./zig-cache/");
+    const clean_step = b.step("clean", "Clean up build directories");
+    clean_step.dependOn(&out_dir.step);
+    clean_step.dependOn(&cache_dir.step);
 }
