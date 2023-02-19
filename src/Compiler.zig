@@ -124,15 +124,19 @@ fn match(self: *Parser, id: TokenType) Error!bool {
     try self.advance();
     return true;
 }
-fn emitByte(self: *Parser, byte: u8) Error!void {
-    try self.currentChunk().push_code(byte, @truncate(u8, self.previous.line));
+fn emitByte(self: *Parser, byte: anytype) Error!void {
+    if (@TypeOf(byte) == OpCode) {
+        try self.currentChunk().push_code(@enumToInt(byte), @truncate(u8, self.previous.line));
+    } else {
+        try self.currentChunk().push_code(byte, @truncate(u8, self.previous.line));
+    }
 }
-fn emitBytes(self: *Parser, byte1: u8, byte2: u8) Error!void {
+fn emitBytes(self: *Parser, byte1: anytype, byte2: anytype) Error!void {
     try self.emitByte(byte1);
     try self.emitByte(byte2);
 }
 fn emitJump(self: *Parser, instruction: OpCode) Error!usize {
-    try self.emitByte(@enumToInt(instruction));
+    try self.emitByte(instruction);
     try self.emitByte(0xff);
     try self.emitByte(0xff);
     return self.currentChunk().code.items.len - 2;
@@ -148,7 +152,7 @@ fn patchJump(self: *Parser, offset: usize) Error!void {
     self.currentChunk().code.items[offset + 1] = @truncate(u8, jump) & 0xff;
 }
 fn emitReturn(self: *Parser) Error!void {
-    try self.emitByte(@enumToInt(OpCode.Return));
+    try self.emitByte(OpCode.Return);
 }
 fn makeConstant(self: *Parser, value: Value) Error!u8 {
     const constant = try self.currentChunk().push_value(value);
@@ -158,7 +162,7 @@ fn makeConstant(self: *Parser, value: Value) Error!u8 {
     return constant;
 }
 fn emitConstant(self: *Parser, value: Value) Error!void {
-    try self.emitBytes(@enumToInt(OpCode.Constant), try self.makeConstant(value));
+    try self.emitBytes(OpCode.Constant, try self.makeConstant(value));
 }
 fn endCompiler(self: *Parser) Error!void {
     try self.emitReturn();
@@ -175,7 +179,7 @@ fn endScope(self: *Parser) Error!void {
     while (self.compiler.local_count > 0 and 
         self.compiler.locals[self.compiler.local_count - 1].depth > 
         self.compiler.scope_depth) : (self.compiler.local_count -= 1) {
-        try self.emitByte(@enumToInt(OpCode.Pop));
+        try self.emitByte(OpCode.Pop);
     }
     // zig fmt: on
 }
@@ -185,24 +189,24 @@ fn binary(self: *Parser, _: bool) Error!void {
     try self.parsePrecedence(@intToEnum(Precedence, @enumToInt(rule.precedence) + 1));
 
     switch (operator_type) {
-        .BangEqual => try self.emitBytes(@enumToInt(OpCode.Equal), @enumToInt(OpCode.Not)),
-        .EqualEqual => try self.emitByte(@enumToInt(OpCode.Equal)),
-        .Greater => try self.emitByte(@enumToInt(OpCode.Greater)),
-        .GreaterEqual => try self.emitBytes(@enumToInt(OpCode.Less), @enumToInt(OpCode.Not)),
-        .Less => try self.emitByte(@enumToInt(OpCode.Less)),
-        .LessEqual => try self.emitBytes(@enumToInt(OpCode.Greater), @enumToInt(OpCode.Not)),
-        .Plus => try self.emitByte(@enumToInt(OpCode.Add)),
-        .Minus => try self.emitByte(@enumToInt(OpCode.Subtract)),
-        .Star => try self.emitByte(@enumToInt(OpCode.Multiply)),
-        .Slash => try self.emitByte(@enumToInt(OpCode.Divide)),
+        .BangEqual => try self.emitBytes(OpCode.Equal, OpCode.Not),
+        .EqualEqual => try self.emitByte(OpCode.Equal),
+        .Greater => try self.emitByte(OpCode.Greater),
+        .GreaterEqual => try self.emitBytes(OpCode.Less, OpCode.Not),
+        .Less => try self.emitByte(OpCode.Less),
+        .LessEqual => try self.emitBytes(OpCode.Greater, OpCode.Not),
+        .Plus => try self.emitByte(OpCode.Add),
+        .Minus => try self.emitByte(OpCode.Subtract),
+        .Star => try self.emitByte(OpCode.Multiply),
+        .Slash => try self.emitByte(OpCode.Divide),
         else => unreachable,
     }
 }
 fn literal(self: *Parser, _: bool) Error!void {
     switch (self.previous.type) {
-        .False => try self.emitByte(@enumToInt(OpCode.False)),
-        .Nil => try self.emitByte(@enumToInt(OpCode.Nil)),
-        .True => try self.emitByte(@enumToInt(OpCode.True)),
+        .False => try self.emitByte(OpCode.False),
+        .Nil => try self.emitByte(OpCode.Nil),
+        .True => try self.emitByte(OpCode.True),
         else => unreachable,
     }
 }
@@ -214,20 +218,29 @@ fn number(self: *Parser, _: bool) Error!void {
     const value = try std.fmt.parseFloat(f64, self.previous.start);
     try self.emitConstant(numberVal(value));
 }
+fn or_(self: *Parser, _: bool) Error!void {
+    const else_jump = try self.emitJump(.JumpIfFalse);
+    const end_jump = try self.emitJump(.Jump);
+
+    try self.patchJump(else_jump);
+    try self.emitByte(OpCode.Pop);
+    try self.parsePrecedence(.Or);
+    try self.patchJump(end_jump);
+}
 fn string(self: *Parser, _: bool) Error!void {
     try self.emitConstant(objVal(&(try self.allocator.copyString(self.previous.start[1 .. self.previous.start.len - 1])).obj));
 }
 fn namedVariable(self: *Parser, name: Token, can_assign: bool) Error!void {
-    var get_op: u8 = undefined;
-    var set_op: u8 = undefined;
+    var get_op: OpCode = undefined;
+    var set_op: OpCode = undefined;
     var arg = try self.resolveLocal(&name);
     if (arg) |_| {
-        get_op = @enumToInt(OpCode.GetLocal);
-        set_op = @enumToInt(OpCode.SetLocal);
+        get_op = .GetLocal;
+        set_op = .SetLocal;
     } else {
         arg = try self.identifierConstant(&name);
-        get_op = @enumToInt(OpCode.GetGlobal);
-        set_op = @enumToInt(OpCode.SetGlobal);
+        get_op = .GetGlobal;
+        set_op = .SetGlobal;
     }
 
     if (can_assign and try self.match(.Equal)) {
@@ -248,8 +261,8 @@ fn unary(self: *Parser, _: bool) Error!void {
 
     // Emit the operator instruction
     switch (operator_type) {
-        .Bang => try self.emitByte(@enumToInt(OpCode.Not)),
-        .Minus => try self.emitByte(@enumToInt(OpCode.Negate)),
+        .Bang => try self.emitByte(OpCode.Not),
+        .Minus => try self.emitByte(OpCode.Negate),
         else => unreachable,
     }
 }
@@ -299,7 +312,7 @@ const rules: [39]ParseRule = [39]ParseRule{
     // Number
     .{ .prefix = number },
     // And
-    .{},
+    .{ .infix = and_, .precedence = .And },
     // Class
     .{},
     // Else
@@ -315,7 +328,7 @@ const rules: [39]ParseRule = [39]ParseRule{
     // Nil
     .{ .prefix = literal },
     // Or
-    .{},
+    .{ .infix = or_, .precedence = .Or },
     // Print
     .{},
     // Return
@@ -365,14 +378,14 @@ fn addLocal(self: *Parser, name: Token) Error!void {
     local.depth = -1;
 }
 fn resolveLocal(self: *Parser, name: *const Token) Error!?u8 {
-    var i: usize = self.compiler.local_count - 1;
+    var i: isize = @bitCast(isize, self.compiler.local_count) - 1;
     while (i >= 0) : (i -= 1) {
-        const local = &self.compiler.locals[i];
+        const local = &self.compiler.locals[@bitCast(usize,i)];
         if (mem.eql(u8, name.start, local.name.start)) {
             if (local.depth == -1) {
                 return self.error_("Can't read local variable in it's own initializer.");
             }
-            return @truncate(u8, i);
+            return @truncate(u8, @bitCast(usize, i));
         }
     }
     return null;
@@ -405,7 +418,14 @@ fn defineVariable(self: *Parser, global: u8) Error!void {
         self.compiler.markInitialized();
         return;
     }
-    try self.emitBytes(@enumToInt(OpCode.DefineGlobal), global);
+    try self.emitBytes(OpCode.DefineGlobal, global);
+}
+fn and_(self: *Parser, _: bool) Error!void {
+    const end_jump = try self.emitJump(.JumpIfFalse);
+    try self.emitByte(OpCode.Pop);
+    try self.parsePrecedence(.And);
+
+    try self.patchJump(end_jump);
 }
 fn getRule(id: TokenType) *const ParseRule {
     return &rules[@enumToInt(id)];
@@ -426,7 +446,7 @@ fn varDeclaration(self: *Parser) Error!void {
     if (try self.match(.Equal)) {
         try self.expression();
     } else {
-        try self.emitByte(@enumToInt(OpCode.Nil));
+        try self.emitByte(OpCode.Nil);
     }
 
     try self.consume(.Semicolon, "Expect ';' after variable declaration.");
@@ -435,7 +455,7 @@ fn varDeclaration(self: *Parser) Error!void {
 fn expressionStatement(self: *Parser) Error!void {
     try self.expression();
     try self.consume(.Semicolon, "Expect ';' after expression.");
-    try self.emitByte(@enumToInt(OpCode.Pop));
+    try self.emitByte(OpCode.Pop);
 }
 fn ifStatement(self: *Parser) Error!void {
     try self.consume(.LeftParen, "Expect '(' after 'if'");
@@ -443,12 +463,12 @@ fn ifStatement(self: *Parser) Error!void {
     try self.consume(.RightParen, "Expect ')' after condition.");
 
     const then_jump = try self.emitJump(.JumpIfFalse);
-    try self.emitByte(@enumToInt(OpCode.Pop));
+    try self.emitByte(OpCode.Pop);
     try self.statement();
     const else_jump = try self.emitJump(.Jump);
 
     try self.patchJump(then_jump);
-    try self.emitByte(@enumToInt(OpCode.Pop));
+    try self.emitByte(OpCode.Pop);
 
     if (try self.match(.Else)) try self.statement();
     try self.patchJump(else_jump);
@@ -456,7 +476,7 @@ fn ifStatement(self: *Parser) Error!void {
 fn printStatement(self: *Parser) Error!void {
     try self.expression();
     try self.consume(.Semicolon, "Expect ';' after value.");
-    try self.emitByte(@enumToInt(OpCode.Print));
+    try self.emitByte(OpCode.Print);
 }
 fn synchronize(self: *Parser) void {
     self.panic_mode = false;
