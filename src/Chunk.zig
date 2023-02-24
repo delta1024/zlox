@@ -72,7 +72,7 @@ pub fn disassembleInstruction(chunk: *const Chunk, offset: usize, writer: anytyp
         .Loop => return try jumpInstruction(chunk, instruction, -1, offset, writer),
         .Jump, .JumpIfFalse => return try jumpInstruction(chunk, instruction, 1, offset, writer),
         .Constant, .DefineGlobal, .GetGlobal, .SetGlobal => return try constantInstruction(chunk, instruction, offset, writer),
-        .GetLocal, .SetLocal => return try byteInstruction(chunk, instruction, offset, writer),
+        .GetLocal, .SetLocal, .Call => return try byteInstruction(chunk, instruction, offset, writer),
         else => return try simpleInstruction(instruction, offset, writer),
     }
 }
@@ -104,6 +104,7 @@ pub const OpCode = enum(u8) {
     Jump,
     Pop,
     Loop,
+    Call,
     Return,
     pub fn format(self: OpCode, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         const width = options.width orelse 0;

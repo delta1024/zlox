@@ -32,7 +32,6 @@ pub const Error = error{
 
 const FRAMES_MAX = 64;
 const STACK_MAX = FRAMES_MAX * math.maxInt(u8);
-frame: Frame = undefined,
 memory: Allocator = Allocator{},
 globals: Table(Value) = Table(Value){},
 frame_count: usize = 0,
@@ -40,6 +39,9 @@ frames: [FRAMES_MAX]Frame = undefined,
 stack_top: usize = 0,
 stack: [STACK_MAX]Value = undefined,
 
+fn clockNative(arg_count: usize, args: []Value) Value {
+    return numberVal(@intToFloat(f64, std.time.timestamp()));
+}
 fn resetStack(self: *VM) void {
     self.stack_top = 0;
     self.frame_count = 0;
@@ -48,12 +50,30 @@ fn runtimeError(self: *VM, comptime format: []const u8, args: anytype) Error {
     const stderr = std.io.getStdErr().writer();
     try stderr.print(format, args);
     _ = try stderr.write("\n");
+    var i: usize = self.frame_count - 1;
+    while (i >= 0) : (i -= 1) {
+        const frame = &self.frames[i];
+        const function =
+            frame.function;
+        const instruction = frame.ip.pos - 1;
+        try stderr.print("[line {d}] in ", .{function.chunk.lines.items[instruction]});
 
-    const frame = &self.frames[self.frame_count - 1];
-    const instruction = frame.ip.pos - 1;
-    const line = frame.function.chunk.lines.items[instruction];
-    try stderr.print("[line {d}] in script\n", .{line});
+        if (function.name) |n| {
+            try stderr.print("{s}()\n", .{n});
+        } else {
+            try stderr.print("script\n", .{});
+        }
+    }
+    self.resetStack();
     return error.Runtime;
+}
+fn defineNative(self: *VM, name: []const u8, func: NativeFn) Error!void {
+    self.push(objVal(&(try self.memory.copyString(name)).obj));
+    self.push(objVal(&(try self.memory.newNative(func)).obj));
+    const string = @fieldParentPtr(ObjString, "obj", self.stack[0].as(*Obj));
+    try self.globals.put(&self.memory.allocator, string.chars[0..mem.len(string.chars)], self.stack[1]);
+    _ = self.pop();
+    _ = self.pop();
 }
 fn push(self: *VM, value: Value) void {
     self.stack[self.stack_top] = value;
@@ -65,6 +85,31 @@ fn pop(self: *VM) Value {
 }
 fn peek(self: *VM, distance: usize) Value {
     return self.stack[self.stack_top - distance - 1];
+}
+fn call(self: *VM, function: *ObjFunction, arg_count: u8) Error!void {
+    if (arg_count != function.arity) {
+        return self.runtimeError("Expected {d} arguments got {d}", .{ function.arity, arg_count });
+    }
+    if (self.frame_count == FRAMES_MAX) {
+        return self.runtimeError("Stack overflow.", .{});
+    }
+    var frame = &self.frames[self.frame_count];
+    self.frame_count += 1;
+    const stack_start = self.stack_top - arg_count - 1;
+    frame.* = Frame.init(function, self.stack[stack_start..], stack_start);
+}
+fn callValue(self: *VM, callee: Value, arg_count: u8) Error!void {
+    if (callee.isObjType(ObjFunction)) {
+        try self.call(@fieldParentPtr(ObjFunction, "obj", callee.as(*Obj)), arg_count);
+        return;
+    } else if (callee.isObjType(ObjNative)) {
+        const native = @fieldParentPtr(ObjNative, "obj", callee.as(*Obj)).function;
+        const result = native(arg_count, self.stack[self.stack_top - arg_count ..]);
+        self.stack_top -= arg_count + 1;
+        self.push(result);
+        return;
+    }
+    return self.runtimeError("Can only call functions and classes.", .{});
 }
 const Frame = struct {
     const Ip = struct {
@@ -83,11 +128,13 @@ const Frame = struct {
     function: *ObjFunction,
     ip: Ip,
     slots: []Value,
-    fn init(function: *ObjFunction, slots: []Value) Frame {
+    start: usize,
+    fn init(function: *ObjFunction, slots: []Value, start: usize) Frame {
         return .{
             .function = function,
             .ip = Ip.init(&function.chunk),
             .slots = slots,
+            .start = start,
         };
     }
     inline fn readByte(self: *Frame) u8 {
@@ -110,6 +157,9 @@ const Frame = struct {
 pub fn init() VM {
     var vm = VM{};
     vm.resetStack();
+    vm.defineNative("clock", clockNative) catch {
+        @panic("Could not initialize vm.");
+    };
     return vm;
 }
 pub fn free(self: *VM) void {
@@ -123,7 +173,7 @@ pub fn interpret(self: *VM, source: []const u8) Error!void {
     self.push(objVal(&function.obj));
     var frame = &self.frames[self.frame_count];
     self.frame_count += 1;
-    frame.* = Frame.init(function, self.stack[0..]);
+    frame.* = Frame.init(function, self.stack[0..], self.stack_top);
     try self.run();
 }
 
@@ -177,8 +227,20 @@ fn run(self: *VM) Error!void {
         const instruction = frame.readByte();
         try switch (@intToEnum(OpCode, instruction)) {
             .Return => {
-                // Exit the interpreter.
-                return;
+                const result = self.pop();
+                self.frame_count -= 1;
+                if (self.frame_count == 0) {
+                    _ = self.pop();
+                    return;
+                }
+                self.stack_top = frame.start;
+                self.push(result);
+                frame = &self.frames[self.frame_count - 1];
+            },
+            .Call => {
+                const arg_count = frame.readByte();
+                try self.callValue(self.peek(arg_count), arg_count);
+                frame = &self.frames[self.frame_count - 1];
             },
             .Loop => {
                 const offset = frame.readShort();

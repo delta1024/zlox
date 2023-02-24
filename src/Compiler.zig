@@ -38,11 +38,14 @@ const Compiler = struct {
     locals: [UINT8_COUNT]Local = undefined,
     local_count: usize = 0,
     scope_depth: usize = 0,
-    fn init(enclosing: ?*Compiler, allocator: *Allocator, id: FunctionType) Error!Compiler {
+    fn init(enclosing: ?*Compiler, allocator: *Allocator, id: FunctionType, parser: *const Parser) Error!Compiler {
         var compiler = Compiler{};
         compiler.enclosing = enclosing;
         compiler.type = id;
         compiler.function = try allocator.newFunction();
+        if (id != .Script) {
+            compiler.function.name = try allocator.copyString(parser.previous.start);
+        }
         var local = &compiler.locals[compiler.local_count];
         compiler.local_count += 1;
         local.depth = 0;
@@ -50,6 +53,7 @@ const Compiler = struct {
         return compiler;
     }
     fn markInitialized(self: *Compiler) void {
+        if (self.scope_depth == 0) return;
         self.locals[self.local_count - 1].depth = @intCast(isize, self.scope_depth);
     }
 };
@@ -179,6 +183,7 @@ fn patchJump(self: *Parser, offset: usize) Error!void {
     self.currentChunk().code.items[offset + 1] = @truncate(u8, jump) & 0xff;
 }
 fn emitReturn(self: *Parser) Error!void {
+    try self.emitByte(OpCode.Nil);
     try self.emitByte(OpCode.Return);
 }
 fn makeConstant(self: *Parser, value: Value) Error!u8 {
@@ -193,10 +198,11 @@ fn emitConstant(self: *Parser, value: Value) Error!void {
 }
 fn endCompiler(self: *Parser) Error!*ObjFunction {
     try self.emitReturn();
-    const function = self.compiler.function;
+    const func = self.compiler.function;
     if (options.debug_print_code and !self.had_error)
-        try Chunk.disassembleChunk(self.currentChunk(), if (function.name) |name| name.chars[0..mem.len(name.chars)] else "<script>"[0..]);
-    return function;
+        try Chunk.disassembleChunk(self.currentChunk(), if (func.name) |name| name.chars[0..mem.len(name.chars)] else "<script>"[0..]);
+    self.compiler = self.compiler.enclosing orelse return func;
+    return func;
 }
 fn beginScope(self: *Parser) void {
     self.compiler.scope_depth += 1;
@@ -230,6 +236,10 @@ fn binary(self: *Parser, _: bool) Error!void {
         .Slash => try self.emitByte(OpCode.Divide),
         else => unreachable,
     }
+}
+fn call(self: *Parser, _: bool) Error!void {
+    const arg_count = try self.argumentList();
+    try self.emitBytes(OpCode.Call, arg_count);
 }
 fn literal(self: *Parser, _: bool) Error!void {
     switch (self.previous.type) {
@@ -297,7 +307,7 @@ fn unary(self: *Parser, _: bool) Error!void {
 }
 const rules: [39]ParseRule = [39]ParseRule{
     // LeftParen
-    .{ .prefix = grouping },
+    .{ .prefix = grouping, .infix = call, .precedence = .Call },
     // RightParen
     .{},
     // LeftBrace
@@ -449,6 +459,19 @@ fn defineVariable(self: *Parser, global: u8) Error!void {
     }
     try self.emitBytes(OpCode.DefineGlobal, global);
 }
+fn argumentList(self: *Parser) Error!u8 {
+    var arg_count: u8 = 0;
+    if (!self.check(.RightParen)) {
+        var i = true;
+        while (i) : (i = try self.match(.Comma)) {
+            try self.expression();
+            if (arg_count == 255) return self.error_("Can't have more than 255 arguments.");
+            arg_count += 1;
+        }
+    }
+    try self.consume(.RightParen, "Expect ')' after arguments.");
+    return arg_count;
+}
 fn and_(self: *Parser, _: bool) Error!void {
     const end_jump = try self.emitJump(.JumpIfFalse);
     try self.emitByte(OpCode.Pop);
@@ -468,6 +491,37 @@ fn block(self: *Parser) Error!void {
     }
 
     try self.consume(.RightBrace, "Expect '}' after block.");
+}
+fn function(self: *Parser, id: Compiler.FunctionType) Error!void {
+    var compiler = try Compiler.init(self.compiler, self.allocator, id, self);
+    self.compiler = &compiler;
+    self.beginScope();
+
+    try self.consume(.LeftParen, "Expect '(' after function name.");
+    if (!self.check(.RightParen)) {
+        while (true) {
+            self.compiler.function.arity += 1;
+            if (self.compiler.function.arity > 255)
+                return self.errorAtCurrent("Can't have more than 255 paramaters.");
+
+            const constant = try self.parseVariable("Expect paramater name.");
+            try self.defineVariable(constant);
+            if (!try self.match(.Comma)) {
+                break;
+            }
+        }
+    }
+    try self.consume(.RightParen, "Expect ')' after paramaters.");
+    try self.consume(.LeftBrace, "Expect '{' befor function body");
+    try self.block();
+    const func = try self.endCompiler();
+    try self.emitBytes(OpCode.Constant, try self.makeConstant(objVal(&func.obj)));
+}
+fn funDeclaration(self: *Parser) Error!void {
+    const global = try self.parseVariable("Expect function name.");
+    self.compiler.markInitialized();
+    try self.function(.Function);
+    try self.defineVariable(global);
 }
 fn varDeclaration(self: *Parser) Error!void {
     const global = try self.parseVariable("Expect variable name");
@@ -548,6 +602,17 @@ fn printStatement(self: *Parser) Error!void {
     try self.consume(.Semicolon, "Expect ';' after value.");
     try self.emitByte(OpCode.Print);
 }
+fn returnStatement(self: *Parser) Error!void {
+    if (self.compiler.type == .Script)
+        return self.error_("Can't return from top level code.");
+    if (try self.match(.Semicolon)) {
+        try self.emitReturn();
+    } else {
+        try self.expression();
+        try self.consume(.Semicolon, "Expect ';' after return value.");
+        try self.emitByte(OpCode.Return);
+    }
+}
 fn whileStatement(self: *Parser) Error!void {
     const loop_start = self.currentChunk().code.items.len;
 
@@ -575,7 +640,12 @@ fn synchronize(self: *Parser) void {
     }
 }
 fn declaration(self: *Parser) void {
-    if (self.match(.Var) catch {
+    if (self.match(.Fun) catch {
+        self.synchronize();
+        return;
+    }) {
+        self.funDeclaration() catch self.synchronize();
+    } else if (self.match(.Var) catch {
         self.synchronize();
         return;
     }) {
@@ -591,6 +661,8 @@ fn statement(self: *Parser) Error!void {
         try self.forStatement();
     } else if (try self.match(.If)) {
         try self.ifStatement();
+    } else if (try self.match(.Return)) {
+        try self.returnStatement();
     } else if (try self.match(.While)) {
         try self.whileStatement();
     } else if (try self.match(.LeftBrace)) {
@@ -602,12 +674,12 @@ fn statement(self: *Parser) Error!void {
     }
 }
 pub fn compile(self: *Parser) Error!*ObjFunction {
-    var compiler = try Compiler.init(null, self.allocator, .Script);
+    var compiler = try Compiler.init(null, self.allocator, .Script, self);
     self.compiler = &compiler;
     try self.advance();
     while (!try self.match(.Eof)) {
         self.declaration();
     }
-    const function = try self.endCompiler();
-    if (self.had_error) return error.Compiler else return function;
+    const func = try self.endCompiler();
+    if (self.had_error) return error.Compiler else return func;
 }

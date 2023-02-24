@@ -42,6 +42,7 @@ pub const Value = union(ValueType) {
             .obj => |obj| switch (T) {
                 ObjString => obj.type == .String,
                 ObjFunction => obj.type == .Function,
+                ObjNative => obj.type == .Native,
                 else => false,
             },
             else => false,

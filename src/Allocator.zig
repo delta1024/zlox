@@ -41,6 +41,11 @@ pub fn newFunction(self: *VmAllocator) Error!*ObjFunction {
     };
     return function;
 }
+pub fn newNative(self: *VmAllocator, function: NativeFn) Error!*ObjNative {
+    var native = @fieldParentPtr(ObjNative, "obj", try self.allocateObj(ObjNative, .Native));
+    native.function = function;
+    return native;
+}
 pub fn allocateObj(self: *VmAllocator, comptime T: type, id: ObjType) Error!*Obj {
     var obj = try self.allocator.create(T);
     obj.* = T.init(&self.allocator);

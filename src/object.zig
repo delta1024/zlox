@@ -2,9 +2,11 @@ const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const Chunk = @import("./Chunk.zig");
+const Value = @import("./value.zig").Value;
 pub const ObjType = enum {
     String,
     Function,
+    Native,
 };
 pub const Obj = struct {
     type: ObjType,
@@ -18,10 +20,13 @@ pub const Obj = struct {
             .Function => {
                 const func = @fieldParentPtr(ObjFunction, "obj", self);
                 if (func.name) |name| {
-                        try writer.print("<fn {s}", .{name});
-                    } else {
-                            try writer.writeAll("<fn script>");
-                        }
+                    try writer.print("<fn {s}>", .{name});
+                } else {
+                    try writer.writeAll("<fn script>");
+                }
+            },
+            .Native => {
+                try writer.writeAll("<native fn>");
             },
         }
     }
@@ -35,6 +40,10 @@ pub const Obj = struct {
             .Function => {
                 const func = @fieldParentPtr(ObjFunction, "obj", self);
                 func.chunk.deinit();
+                allocator.destroy(func);
+            },
+            .Native => {
+                const func = @fieldParentPtr(ObjNative, "obj", self);
                 allocator.destroy(func);
             },
         }
@@ -60,5 +69,16 @@ pub const ObjString = struct {
     }
     pub fn format(self: *const ObjString, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("{s}", .{self.chars});
+    }
+};
+
+pub const NativeFn = fn (usize, []Value) Value;
+pub const ObjNative = struct {
+    obj: Obj,
+    function: NativeFn = undefined,
+    pub fn init(_: *Allocator) ObjNative {
+        return .{
+            .obj = .{ .type = .Native },
+        };
     }
 };
