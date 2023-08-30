@@ -1,10 +1,11 @@
 const std = @import("std");
-const lexer = @import("lexer.zig");
-const Lexer = lexer.Lexer;
+const page_allcator = std.heap.page_allocator;
+const chunk = @import("chunk.zig");
+const Chunk = chunk.Chunk;
 
 pub fn main() !void {
-    var lex = Lexer.init("and fun for hello <= == = < (){}./,");
-    while (lex.next()) |token| {
-        std.debug.print("{}", .{token});
-    }
+    var ch = Chunk.init(page_allcator);
+    defer ch.deinit();
+    try ch.pushByte(.Return);
+    std.debug.print("{test chunk}", .{ch});
 }
