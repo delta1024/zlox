@@ -10,8 +10,11 @@ pub fn build(b: *std.build.Builder) void {
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "debug_trace_execution", b.option(bool, "debug_trace_execution", "trace vm execution") orelse true);
 
     const exe = b.addExecutable("zlox", "src/main.zig");
+    exe.addOptions("build_options", build_options);
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();

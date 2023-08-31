@@ -53,10 +53,12 @@ pub const Chunk = struct {
     }
     fn constantInstruction(self: *const Chunk, name: []const u8, offset: usize, writer: anytype) @TypeOf(writer).Error!usize {
         const constant = self.code.items[offset + 1];
-        try writer.print("{s: <16} {d: >4} '{d}'\n", .{ name, constant, self.values.items[constant] });
+        try writer.print("{s: <16} {d: >4} '{d}'", .{ name, constant, self.values.items[constant] });
         return offset + 2;
     }
     pub fn dissasembleInstruction(self: *const Chunk, offset: usize, writer: anytype) @TypeOf(writer).Error!usize {
+        // So we know where done
+        if (offset >= self.code.items.len) return 0;
         try writer.print("{X:0>4} ", .{@truncate(u32, offset)});
 
         if (offset > 0 and (self.lines.items[offset] == self.lines.items[offset - 1]))
@@ -65,7 +67,7 @@ pub const Chunk = struct {
             try writer.print("{d: >4} ", .{self.lines.items[offset]});
 
         const instruction = @intToEnum(OpCode, self.code.items[offset]);
-        return switch (instruction) {
+        const n = switch (instruction) {
             .Constant => try self.constantInstruction("OP_CONSTANT", offset, writer),
             .Return => try simpleInstruction("OP_RETURN", offset, writer),
             // else => b: {
@@ -73,6 +75,8 @@ pub const Chunk = struct {
             //     break :b offset + 1;
             // },
         };
+        try writer.print("\n", .{});
+        return n;
     }
     pub fn format(self: Chunk, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = options;
