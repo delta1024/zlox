@@ -1,12 +1,42 @@
 const std = @import("std");
 const mem = std.mem;
+const ascii = std.ascii;
 const ArrayList = std.ArrayList;
 const Allocator = mem.Allocator;
 const Value = @import("value.zig").Value;
 
 pub const OpCode = enum(u8) {
     Constant,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Negate,
     Return,
+    pub fn format(self: OpCode, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = options;
+        _ = fmt;
+        const varient = @tagName(self);
+        var buffer: [256]u8 = undefined;
+        var n: usize = 0;
+        for ("OP_") |v| {
+            buffer[n] = v;
+            n += 1;
+        }
+        for (varient) |v, i| {
+            if (ascii.isUpper(v) and i > 2) {
+                buffer[n] = '_';
+                n += 1;
+                buffer[n] = v;
+                n += 1;
+            } else {
+                buffer[n] = ascii.toUpper(v);
+                n += 1;
+            }
+        }
+        buffer[n] = '0';
+        try writer.print("{s}", .{buffer[0..n]});
+    }
 };
 
 pub const Chunk = struct {
@@ -47,8 +77,8 @@ pub const Chunk = struct {
         var offset: usize = 0;
         while (offset < self.code.items.len) : (offset = try self.dissasembleInstruction(offset, writer)) {}
     }
-    fn simpleInstruction(name: []const u8, offset: usize, writer: anytype) @TypeOf(writer).Error!usize {
-        try writer.print("{s}\n", .{name});
+    fn simpleInstruction(name: OpCode, offset: usize, writer: anytype) @TypeOf(writer).Error!usize {
+        try writer.print("{}", .{name});
         return offset + 1;
     }
     fn constantInstruction(self: *const Chunk, name: []const u8, offset: usize, writer: anytype) @TypeOf(writer).Error!usize {
@@ -66,10 +96,10 @@ pub const Chunk = struct {
         else
             try writer.print("{d: >4} ", .{self.lines.items[offset]});
 
-        const instruction = @intToEnum(OpCode, self.code.items[offset]);
+        const instruction: OpCode = @intToEnum(OpCode, self.code.items[offset]);
         const n = switch (instruction) {
             .Constant => try self.constantInstruction("OP_CONSTANT", offset, writer),
-            .Return => try simpleInstruction("OP_RETURN", offset, writer),
+            else => try simpleInstruction(instruction, offset, writer),
             // else => b: {
             //     try writer.print("Unknown opcode {}\n", .{instruction});
             //     break :b offset + 1;
