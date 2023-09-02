@@ -12,6 +12,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
     const build_options = b.addOptions();
     build_options.addOption(bool, "debug_trace_execution", b.option(bool, "debug_trace_execution", "trace vm execution") orelse true);
+    build_options.addOption(bool, "debug_print_code", b.option(bool, "debug_print_code", "print code chunks after compilation") orelse true);
 
     const exe = b.addExecutable("zlox", "src/main.zig");
     exe.addOptions("build_options", build_options);

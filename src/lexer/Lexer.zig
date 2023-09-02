@@ -10,6 +10,7 @@ source: []const u8,
 start: usize = 0,
 current: usize = 0,
 line: u32 = 1,
+at_end: bool = false,
 
 pub const Error = error{ UnterminatedString, EndOfFile, UnexpectedChar };
 
@@ -22,7 +23,10 @@ pub fn init(source: []const u8) Lexer {
 pub fn next(self: *Lexer) ?Token {
     self.skipWhitespace();
     self.start = self.current;
-    if (self.isAtEnd()) return null;
+    if (self.isAtEnd() and self.at_end) return null else if (self.isAtEnd() and !self.at_end) {
+        self.at_end = true;
+        return self.makeToken(.Eof);
+    }
 
     const c = self.advance();
 

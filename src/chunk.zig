@@ -43,7 +43,7 @@ pub const Chunk = struct {
     code: ArrayList(u8),
     values: ArrayList(Value),
     lines: ArrayList(u8),
-    const Error = error{OutOfMemory} || Allocator.Error;
+    pub const Error = error{OutOfMemory} || Allocator.Error;
     pub fn init(allocator: Allocator) Chunk {
         return .{
             .code = ArrayList(u8).init(allocator),
@@ -65,9 +65,9 @@ pub const Chunk = struct {
         try self.pushByte(@TypeOf(byte1), byte1, line);
         try self.pushByte(@TypeOf(byte2), byte2, line);
     }
-    pub fn addConstant(self: *Chunk, value: Value) Error!u8 {
+    pub fn addConstant(self: *Chunk, value: Value) Error!usize {
         try self.values.append(value);
-        return @truncate(u8, self.values.items.len) - 1;
+        return self.values.items.len - 1;
     }
 
     // Formating Functions -------------------------------------------------
