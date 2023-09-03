@@ -78,7 +78,7 @@ fn identifierType(self: *const Lexer) TokenType {
         else
             .Identifier,
         'i' => self.checkKeyword(1, 2, "f", .If),
-        'n' => self.checkKeyword(1, 3, "il", .Nil),
+        'n' => self.checkKeyword(1, 2, "il", .Nil),
         'o' => self.checkKeyword(1, 2, "r", .Or),
         'p' => self.checkKeyword(1, 4, "rint", .Print),
         'r' => self.checkKeyword(1, 5, "eturn", .Return),

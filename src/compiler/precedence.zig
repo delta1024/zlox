@@ -31,6 +31,10 @@ pub fn getRule(token: TokenType) ParseRule {
         .Plus => ParseRule.init(.Term, .{ .i = LuF.binary }),
         .Slash, .Star => ParseRule.init(.Factor, .{ .i = LuF.binary }),
         .Number => ParseRule.init(.None, .{ .p = LuF.number }),
+        .False, .True, .Nil => ParseRule.init(.None, .{ .p = LuF.literal }),
+        .Bang => ParseRule.init(.None, .{ .p = LuF.unary }),
+        .BangEqual, .EqualEqual => ParseRule.init(.Equality, .{ .i = LuF.binary }),
+        .Greater, .GreaterEqual, .Less, .LessEqual => ParseRule.init(.Comparison, .{ .i = LuF.binary }),
         else => ParseRule.init(.None, .{}),
     };
 }

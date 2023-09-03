@@ -29,6 +29,13 @@ pub const Value = union(ValueType) {
             else => unreachable,
         }
     }
+    pub fn isFalsey(self: Value) bool {
+        return switch (self) {
+            .nil => true,
+            .boolean => |b| !b,
+            else => false,
+        };
+    }
 
     pub fn format(self: Value, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
@@ -40,3 +47,12 @@ pub const Value = union(ValueType) {
         }
     }
 };
+
+pub fn valuesEqual(a: Value, b: Value) bool {
+    if (@as(ValueType, a) != @as(ValueType, b)) return false;
+    return switch (a) {
+        .boolean => |a_| a_ == b.as(bool),
+        .nil => true,
+        .number => |a_| a_ == b.as(f64),
+    };
+}

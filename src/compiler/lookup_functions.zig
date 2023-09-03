@@ -38,6 +38,7 @@ pub fn unary(parser: *Parser, can_assign: bool) Parser.Error!void {
 
     switch (op) {
         .Minus => try parser.emitByte(OpCode.Negate),
+        .Bang => try parser.emitByte(OpCode.Not),
         else => unreachable,
     }
 }
@@ -48,11 +49,28 @@ pub fn binary(parser: *Parser, can_assign: bool) Parser.Error!void {
 
     try parsePrecedence(parser, @intToEnum(Precedence, @enumToInt(rule.precedence) + 1), false);
 
-    try parser.emitByte(switch (operator_type) {
-        .Plus => OpCode.Add,
-        .Minus => OpCode.Subtract,
-        .Star => OpCode.Multiply,
-        .Slash => OpCode.Divide,
+    switch (operator_type) {
+        .BangEqual => try parser.emitBytes(OpCode.Equal, OpCode.Not),
+        .EqualEqual => try parser.emitByte(OpCode.Equal),
+        .Greater => try parser.emitByte(OpCode.Greater),
+        .GreaterEqual => try parser.emitBytes(OpCode.Less, OpCode.Not),
+        .Less => try parser.emitByte(OpCode.Less),
+        .LessEqual => try parser.emitBytes(OpCode.Greater, OpCode.Not),
+        .Plus => try parser.emitByte(OpCode.Add),
+        .Minus => try parser.emitByte(OpCode.Subtract),
+        .Star => try parser.emitByte(OpCode.Multiply),
+        .Slash => try parser.emitByte(OpCode.Divide),
+        else => unreachable,
+    }
+}
+
+pub fn literal(parser: *Parser, can_assign: bool) Parser.Error!void {
+    _ = can_assign;
+    std.debug.print("{?}", .{parser.previous.?.id});
+    try parser.emitByte(switch (parser.previous.?.id) {
+        .False => OpCode.False,
+        .True => OpCode.True,
+        .Nil => OpCode.Nil,
         else => unreachable,
     });
 }

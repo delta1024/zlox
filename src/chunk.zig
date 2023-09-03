@@ -12,6 +12,13 @@ pub const OpCode = enum(u8) {
     Multiply,
     Divide,
     Negate,
+    Nil,
+    True,
+    False,
+    Not,
+    Equal,
+    Greater,
+    Less,
     Return,
     pub fn format(self: OpCode, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = options;
@@ -89,7 +96,7 @@ pub const Chunk = struct {
     pub fn dissasembleInstruction(self: *const Chunk, offset: usize, writer: anytype) @TypeOf(writer).Error!usize {
         // So we know where done
         if (offset >= self.code.items.len) return 0;
-        try writer.print("{X:0>4} ", .{@truncate(u32, offset)});
+        try writer.print("{d:0>4} ", .{@truncate(u32, offset)});
 
         if (offset > 0 and (self.lines.items[offset] == self.lines.items[offset - 1]))
             try writer.print("   | ", .{})
