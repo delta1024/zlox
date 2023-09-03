@@ -7,7 +7,7 @@ pub fn compile(source: []const u8, chunk: *Chunk) bool {
 
     parser.advance() catch return false;
 
-    luf.expression(&parser) catch return false;
+    luf.expression(&parser, false) catch return false;
 
     parser.consume(.Eof, "Expect end of expression") catch return false;
     parser.endCompiler() catch return false;

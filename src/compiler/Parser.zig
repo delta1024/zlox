@@ -39,9 +39,11 @@ pub fn emitBytes(self: *Self, byte1: anytype, byte2: anytype) Error!void {
 }
 pub fn endCompiler(self: *Self) Error!void {
     try self.emitReturn();
+    // debug_print_code
     if (build_options.debug_print_code) {
         self.currentChunk().dissasembleChunk("code", std.io.getStdErr().writer()) catch unreachable;
-    }
+    } // debug_print_code
+
 }
 pub fn emitReturn(self: *Self) Error!void {
     try self.emitByte(OpCode.Return);

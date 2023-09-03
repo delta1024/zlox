@@ -1,6 +1,6 @@
 const Parser = @import("Parser.zig");
 const TokenType = @import("../lexer.zig").TokenType;
-const lUF = @import("lookup_functions.zig");
+
 pub const Precedence = enum(usize) {
     None = 0,
     /// =
@@ -23,17 +23,18 @@ pub const Precedence = enum(usize) {
     Call,
     Primary,
 };
+const LuF = @import("lookup_functions.zig");
 pub fn getRule(token: TokenType) ParseRule {
     return switch (token) {
-        .LeftParen => ParseRule.init(.None, .{ .p = lUF.grouping }),
-        .Minus => ParseRule.init(.Term, .{ .p = lUF.unary, .i = lUF.binary }),
-        .Plus => ParseRule.init(.Term, .{ .i = lUF.binary }),
-        .Slash, .Star => ParseRule.init(.Factor, .{ .i = lUF.binary }),
-        .Number => ParseRule.init(.None, .{ .p = lUF.number }),
+        .LeftParen => ParseRule.init(.None, .{ .p = LuF.grouping }),
+        .Minus => ParseRule.init(.Term, .{ .p = LuF.unary, .i = LuF.binary }),
+        .Plus => ParseRule.init(.Term, .{ .i = LuF.binary }),
+        .Slash, .Star => ParseRule.init(.Factor, .{ .i = LuF.binary }),
+        .Number => ParseRule.init(.None, .{ .p = LuF.number }),
         else => ParseRule.init(.None, .{}),
     };
 }
-pub const ParseFn = *const fn (parser: *Parser) Parser.Error!void;
+pub const ParseFn = *const fn (parser: *Parser, bool) Parser.Error!void;
 
 pub const ParseRule = struct {
     const ProtoRule = struct {

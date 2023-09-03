@@ -15,6 +15,9 @@ fn repl() !void {
     const stdout = std.io.getStdOut();
 
     while (true) {
+        vm = .{
+            .stack = vm.stack,
+        };
         try stdout.writeAll("> ");
 
         const src = (try nextLine(stdin.reader(), &buf)) orelse break;

@@ -1,6 +1,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
 const Value = @import("value.zig").Value;
+const ValueType = @import("value.zig").ValueType;
 const OpCode = @import("chunk.zig").OpCode;
 const Chunk = @import("chunk.zig").Chunk;
 const compile = @import("compiler.zig").compile;
@@ -8,13 +9,22 @@ pub const InterpretError = error{ InterpretCompileError, InterpretRuntimeError, 
 
 pub const Vm = @import("vm/Vm.zig");
 fn BinaryOp(vm: *Vm, comptime op: u8) InterpretError!void {
-    if (vm.stack.pop()) |b| if (vm.stack.pop()) |a| try vm.stack.push(switch (op) {
-        '+' => a + b,
-        '-' => a - b,
-        '*' => a * b,
-        '/' => a * b,
-        else => unreachable,
-    });
+    if (vm.stack.peek(0)) |b| if (vm.stack.peek(1)) |a| {
+        if (!b.is(f64) or !a.is(f64)) {
+            vm.runtimeError("Operands must be numbers.", .{});
+            return error.InterpretRuntimeError;
+        }
+        _ = vm.stack.pop();
+        _ = vm.stack.pop();
+
+        switch (op) {
+            '+' => try vm.stack.push(.{ .number = a.as(f64) + b.as(f64) }),
+            '-' => try vm.stack.push(.{ .number = a.as(f64) - b.as(f64) }),
+            '*' => try vm.stack.push(.{ .number = a.as(f64) * b.as(f64) }),
+            '/' => try vm.stack.push(.{ .number = a.as(f64) / b.as(f64) }),
+            else => unreachable,
+        }
+    };
 }
 fn run(vm: *Vm) InterpretError!void {
     while (true) {
@@ -42,7 +52,17 @@ fn run(vm: *Vm) InterpretError!void {
                 .Subtract => try BinaryOp(vm, '-'),
                 .Multiply => try BinaryOp(vm, '*'),
                 .Divide => try BinaryOp(vm, '/'),
-                .Negate => if (vm.stack.pop()) |v| try vm.stack.push(-v),
+                .Negate => {
+                    if (vm.stack.peek(0)) |v| {
+                        if (!v.is(f64)) {
+                            vm.runtimeError("Operand must be a numder.", .{});
+                            return error.InterpretRuntimeError;
+                        }
+                        _ = vm.stack.pop();
+                        try vm.stack.push(.{ .number = -(v.as(f64)) });
+                    }
+                },
+
                 .Constant => {
                     if (vm.readConstant()) |constant|
                         try vm.stack.push(constant);
